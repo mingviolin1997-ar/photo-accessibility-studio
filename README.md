@@ -9,8 +9,9 @@
 - 首次启动只检查本机，不会偷偷下载。
 - 缺少环境或模型时，先弹窗说明下载大小并询问是否自动配置。
 - 同意后显示当前步骤、进度、已下载/总大小和实时速度；拒绝后保持离线，可稍后从模型状态或设置重新尝试。
-- Mac 会按需配置 Ollama、ExifTool 和所选模型，并复用本机已经安装的组件；设置中可检测、下载和切换 Qwen 3.5 4B、Gemma 4 E2B 或 Gemma 4 E4B。
-- Gemma 3n E2B/E4B 也列在下载目录中并提供设备建议。Ollama 官方当前包只标注文本输入，因此 macOS 版允许下载检测，但不会错误地把它们设为照片识别模型；Android/iPhone 应使用 LiteRT-LM 专用模型包。
+- Mac 首次启动先询问使用 MLX 还是 Ollama；推荐针对 Apple 芯片优化的 MLX，也可随时在设置中切换。
+- MLX 会按需建立独立的 MLX-VLM 环境并下载 4-bit 视觉模型，不修改系统 Python；已经安装的 uv、运行环境和模型会直接复用。Ollama 仍作为兼容回退。
+- 设置中可检测、下载和切换 Qwen 3.5 4B、Gemma 4 E2B/E4B、Gemma 3n E2B/E4B。五个模型在 MLX 中都支持照片；Ollama 的 Gemma 3n 当前包只标注文本输入，因此不会被误设为照片模型。
 - Android 内置 LiteRT-LM 0.15.0 推理运行库，按需断点下载固定版本的 Qwen3.5 4B 多模态模型，完成后核对文件长度和 SHA-256。
 
 ## 批量工作流
@@ -36,9 +37,10 @@
 ## Mac 版
 
 - macOS 14 或更高版本，Apple Silicon。
-- 本地推理使用 Ollama；默认 qwen3.5:4b，可选择支持图片输入的 Gemma 4 E2B/E4B。
+- 默认推荐 MLX-VLM + `mlx-community/Qwen3.5-4B-MLX-4bit`；也可切换回 Ollama。首次配置前一定先询问，不会静默下载。
+- MLX 环境使用固定版 uv 0.11.10 和 MLX-VLM 0.6.6，保存在应用支持目录；Qwen 4-bit 权重约 3.06 GB，环境和模型都按安装状态跳过重复下载。
 - 图像会用 ImageIO 在后台按方向缩放到最长边 1280 像素并转成节能 JPEG，支持 JPEG、PNG（含用户样本中的 16 位 PNG）、HEIC/HEIF、TIFF 和 WebP。
-- Ollama 使用 JSON Schema 结构化输出、受控上下文和输出长度；普通照片通常只需一次视觉推理。用户提供的 10 张混合格式样本在本机低详细度回归中 10/10 成功，总计约 30.7 秒。
+- MLX 与 Ollama 都使用 JSON Schema 结构化输出；普通照片通常只需一次视觉推理。用户提供的 10 张混合格式样本均为 10/10 成功：MLX 约 20.34 秒，Ollama 约 30.13 秒，本次 MLX 回归约快 32%。
 - 按 Command-逗号打开标准设置窗口。
 - ExifTool 仅用于注入应用刻意构造的原始 XMP packet，以及写后回读；不会使用可能生成嵌套字段的普通高层赋值。
 - 识别期间默认每秒播放轻声进度提示，音调随进度升高；50% 和 100% 使用不同提示音，可在设置中关闭。
@@ -67,6 +69,6 @@ Android 代码位于 android 分支和 androidApp/ 目录。
 
 ## 隐私、模型与许可
 
-照片只进入设备本地推理引擎。只有用户确认自动配置时，软件才连接 Ollama、GitHub、SourceForge 或 Hugging Face 下载所需公开组件。
+照片只进入设备本地推理引擎。只有用户确认自动配置时，软件才连接 Ollama、GitHub、Astral、PyPI、SourceForge 或 Hugging Face 下载所需公开组件。
 
 项目源代码使用 [MIT License](LICENSE)。第三方运行库、工具和模型保留各自许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

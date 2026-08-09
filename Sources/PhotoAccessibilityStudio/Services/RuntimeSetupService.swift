@@ -17,6 +17,25 @@ final class RuntimeSetupService {
 
     init() {}
 
+    func metadataToolMissingReason() -> String? {
+        RuntimeToolLocator.exifTool() == nil ? "ExifTool 元数据环境" : nil
+    }
+
+    func installMetadataToolIfNeeded(progress: @escaping ProgressHandler) async throws {
+        guard RuntimeToolLocator.exifTool() == nil else { return }
+        try FileManager.default.createDirectory(at: RuntimePaths.root,
+                                                withIntermediateDirectories: true)
+        let archive = try await RuntimeFileDownloader().download(
+            from: exifArchive,
+            step: "正在下载 ExifTool 元数据环境",
+            expectedBytes: exifBytes,
+            expectedSHA256: exifSHA,
+            progress: progress
+        )
+        defer { try? FileManager.default.removeItem(at: archive) }
+        try installExifTool(from: archive)
+    }
+
     func inspect(modelName: String = AppConfiguration().modelName) async -> String? {
         var missing: [String] = []
         if RuntimeToolLocator.exifTool() == nil { missing.append("ExifTool 元数据环境") }
@@ -38,17 +57,7 @@ final class RuntimeSetupService {
                  progress: @escaping ProgressHandler) async throws {
         try FileManager.default.createDirectory(at: RuntimePaths.root,
                                                 withIntermediateDirectories: true)
-        if RuntimeToolLocator.exifTool() == nil {
-            let archive = try await RuntimeFileDownloader().download(
-                from: exifArchive,
-                step: "正在下载 ExifTool 元数据环境",
-                expectedBytes: exifBytes,
-                expectedSHA256: exifSHA,
-                progress: progress
-            )
-            defer { try? FileManager.default.removeItem(at: archive) }
-            try installExifTool(from: archive)
-        }
+        try await installMetadataToolIfNeeded(progress: progress)
 
         if !(await serverResponding()) {
             var executable = RuntimeToolLocator.ollama()

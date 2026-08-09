@@ -29,6 +29,33 @@ enum VisionModel: String, CaseIterable, Identifiable {
         }
     }
 
+    var mlxName: String {
+        switch self {
+        case .qwen35_4B: return "mlx-community/Qwen3.5-4B-MLX-4bit"
+        case .gemma4E2B: return "mlx-community/gemma-4-e2b-it-4bit"
+        case .gemma4E4B: return "mlx-community/gemma-4-e4b-it-4bit"
+        case .gemma3nE2B: return "mlx-community/gemma-3n-E2B-it-4bit"
+        case .gemma3nE4B: return "mlx-community/gemma-3n-E4B-it-4bit"
+        }
+    }
+
+    var mlxRevision: String {
+        switch self {
+        case .qwen35_4B: return "32f3e8ecf65426fc3306969496342d504bfa13f3"
+        case .gemma4E2B: return "238767527555cb75a05732a84dff5d6ba0dd6809"
+        case .gemma4E4B: return "475b9088d29754a3379866cf5aeb6b41acd313c2"
+        case .gemma3nE2B: return "66e7276cfc589073b4f92ebed58c05301f990222"
+        case .gemma3nE4B: return "505468a22e5703ff090e222aae9beedec49b383f"
+        }
+    }
+
+    func identifier(for engine: InferenceEngine) -> String {
+        switch engine {
+        case .mlx: return mlxName
+        case .ollama: return ollamaName
+        }
+    }
+
     var downloadSize: String {
         switch self {
         case .qwen35_4B: return "约 3.4 GB"
@@ -36,6 +63,17 @@ enum VisionModel: String, CaseIterable, Identifiable {
         case .gemma4E4B: return "约 9.6 GB"
         case .gemma3nE2B: return "约 5.6 GB"
         case .gemma3nE4B: return "约 7.5 GB"
+        }
+    }
+
+    func downloadSize(for engine: InferenceEngine) -> String {
+        guard engine == .mlx else { return downloadSize }
+        switch self {
+        case .qwen35_4B: return "约 3.1 GB"
+        case .gemma4E2B: return "约 3.2 GB"
+        case .gemma4E4B: return "约 5.0 GB"
+        case .gemma3nE2B: return "约 4.5 GB"
+        case .gemma3nE4B: return "约 5.9 GB"
         }
     }
 
@@ -47,6 +85,10 @@ enum VisionModel: String, CaseIterable, Identifiable {
         case .gemma3nE2B, .gemma3nE4B: return false
         default: return true
         }
+    }
+
+    func supportsPhotoRecognition(on engine: InferenceEngine) -> Bool {
+        engine == .mlx || supportsPhotoRecognitionInMacApp
     }
 
     var recommendation: String {
@@ -64,7 +106,35 @@ enum VisionModel: String, CaseIterable, Identifiable {
         }
     }
 
+    func recommendation(for engine: InferenceEngine) -> String {
+        guard engine == .mlx else { return recommendation }
+        switch self {
+        case .qwen35_4B:
+            return "默认推荐。约 3.1 GB 的 4-bit MLX 视觉模型，中文描述均衡；建议 Apple 芯片 Mac、16 GB 内存和 macOS 14 或更高。"
+        case .gemma4E2B:
+            return "偏速度和能耗，支持照片输入；建议 16 GB 内存。适合希望降低风扇噪声和批量处理时间的 Mac。"
+        case .gemma4E4B:
+            return "偏识别质量，支持照片输入，运行内存和发热高于 E2B；建议 24 GB 或更多内存。"
+        case .gemma3nE2B:
+            return "移动优先的多模态模型，在 MLX 中可直接识别照片；建议 16 GB 内存。Android/iPhone 仍优先使用 LiteRT-LM 专用包。"
+        case .gemma3nE4B:
+            return "Gemma 3n 中质量更高的一档，在 MLX 中可直接识别照片；建议 24 GB 内存。移动端建议 12 GB 内存旗舰设备。"
+        }
+    }
+
     static func matching(ollamaName: String) -> VisionModel? {
         allCases.first { $0.ollamaName == ollamaName }
+    }
+
+    static func matching(identifier: String) -> VisionModel? {
+        allCases.first { $0.ollamaName == identifier || $0.mlxName == identifier || $0.rawValue == identifier }
+    }
+
+    static func stored(defaults: UserDefaults = .standard) -> VisionModel {
+        if let raw = defaults.string(forKey: "selectedVisionModelID"),
+           let model = matching(identifier: raw) { return model }
+        if let legacy = defaults.string(forKey: "selectedVisionModel"),
+           let model = matching(identifier: legacy) { return model }
+        return .qwen35_4B
     }
 }

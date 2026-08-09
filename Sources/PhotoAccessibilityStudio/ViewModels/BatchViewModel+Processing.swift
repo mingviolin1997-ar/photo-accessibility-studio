@@ -3,11 +3,23 @@ import Foundation
 extension BatchViewModel {
     func checkModel() {
         guard !isRuntimeInstalling else { return }
+        guard InferenceEngine.stored() != nil else {
+            modelHealth = .unavailable("请先选择 MLX 或 Ollama")
+            statusMessage = "请先选择本地推理引擎。推荐 MLX。"
+            showEngineSelectionPrompt = true
+            return
+        }
         modelHealth = .checking
         Task {
-            installedModelNames = await runtimeSetupService.installedModelNames()
-            let modelName = ollamaClient.configuration.modelName
-            if let missing = await runtimeSetupService.inspect(modelName: modelName) {
+            installedModelNames = await installedModelsForCurrentEngine()
+            let missing: String?
+            switch selectedInferenceEngine {
+            case .mlx:
+                missing = await mlxRuntimeSetupService.inspect(model: selectedVisionModel)
+            case .ollama:
+                missing = await runtimeSetupService.inspect(modelName: selectedVisionModel.ollamaName)
+            }
+            if let missing {
                 runtimeSetupReason = missing
                 modelHealth = .unavailable(missing)
                 statusMessage = "需要配置：\(missing)。尚未开始下载。"
@@ -15,9 +27,26 @@ extension BatchViewModel {
                 announce(statusMessage)
             } else {
                 modelHealth = .ready
-                statusMessage = "本地 \(selectedVisionModel.displayName)、Ollama 与 ExifTool 已就绪。"
+                statusMessage = "本地 \(selectedVisionModel.displayName)、\(selectedInferenceEngine.displayName) 与 ExifTool 已就绪。"
             }
         }
+    }
+
+    func chooseInferenceEngine(_ engine: InferenceEngine) {
+        guard !isProcessing, !isRuntimeInstalling else { return }
+        showEngineSelectionPrompt = false
+        UserDefaults.standard.set(engine.rawValue, forKey: "selectedInferenceEngine")
+        selectedInferenceEngine = engine
+        if !selectedVisionModel.supportsPhotoRecognition(on: engine) {
+            selectedVisionModel = .qwen35_4B
+            UserDefaults.standard.set(VisionModel.qwen35_4B.rawValue,
+                                      forKey: "selectedVisionModelID")
+        }
+        localVisionClient = LocalVisionClient(engine: engine, model: selectedVisionModel)
+        installedModelNames = []
+        runtimeProgress = nil
+        statusMessage = "已选择 \(engine.displayName)，正在检查本机环境。"
+        checkModel()
     }
 
     func acceptRuntimeSetup() {
@@ -30,17 +59,26 @@ extension BatchViewModel {
         statusMessage = "正在自动下载并配置缺少的本地环境。"
         Task {
             do {
-                let modelName = ollamaClient.configuration.modelName
-                try await runtimeSetupService.install(modelName: modelName) { progress in
-                    Task { @MainActor in
-                        self.runtimeProgress = progress
-                        self.statusMessage = progress.step
+                switch selectedInferenceEngine {
+                case .mlx:
+                    try await mlxRuntimeSetupService.install(model: selectedVisionModel) { progress in
+                        Task { @MainActor in
+                            self.runtimeProgress = progress
+                            self.statusMessage = progress.step
+                        }
+                    }
+                case .ollama:
+                    try await runtimeSetupService.install(modelName: selectedVisionModel.ollamaName) { progress in
+                        Task { @MainActor in
+                            self.runtimeProgress = progress
+                            self.statusMessage = progress.step
+                        }
                     }
                 }
                 isRuntimeInstalling = false
                 modelHealth = .ready
-                installedModelNames = await runtimeSetupService.installedModelNames()
-                statusMessage = "自动配置完成，本地 \(selectedVisionModel.displayName) 已就绪。"
+                installedModelNames = await installedModelsForCurrentEngine()
+                statusMessage = "自动配置完成，本地 \(selectedVisionModel.displayName) 与 \(selectedInferenceEngine.displayName) 已就绪。"
                 announce(statusMessage)
             } catch {
                 isRuntimeInstalling = false
@@ -53,7 +91,7 @@ extension BatchViewModel {
 
     func refreshInstalledModels() {
         Task {
-            installedModelNames = await runtimeSetupService.installedModelNames()
+            installedModelNames = await installedModelsForCurrentEngine()
         }
     }
 
@@ -68,20 +106,32 @@ extension BatchViewModel {
         statusMessage = "正在检查本机是否已安装 \(model.displayName)。"
         Task {
             do {
-                try await runtimeSetupService.install(modelName: model.ollamaName) { progress in
-                    Task { @MainActor in
-                        self.runtimeProgress = progress
-                        self.statusMessage = progress.step
+                switch selectedInferenceEngine {
+                case .mlx:
+                    try await mlxRuntimeSetupService.install(model: model) { progress in
+                        Task { @MainActor in
+                            self.runtimeProgress = progress
+                            self.statusMessage = progress.step
+                        }
+                    }
+                case .ollama:
+                    try await runtimeSetupService.install(modelName: model.ollamaName) { progress in
+                        Task { @MainActor in
+                            self.runtimeProgress = progress
+                            self.statusMessage = progress.step
+                        }
                     }
                 }
-                installedModelNames = await runtimeSetupService.installedModelNames()
-                if model.supportsPhotoRecognitionInMacApp {
-                    UserDefaults.standard.set(model.ollamaName, forKey: "selectedVisionModel")
-                    ollamaClient = OllamaClient(configuration: AppConfiguration(modelName: model.ollamaName))
+                installedModelNames = await installedModelsForCurrentEngine()
+                if model.supportsPhotoRecognition(on: selectedInferenceEngine) {
+                    UserDefaults.standard.set(model.rawValue, forKey: "selectedVisionModelID")
+                    UserDefaults.standard.set(model.identifier(for: selectedInferenceEngine),
+                                              forKey: "selectedVisionModel")
+                    selectedVisionModel = model
+                    localVisionClient = LocalVisionClient(engine: selectedInferenceEngine,
+                                                          model: model)
                     modelHealth = .ready
-                    statusMessage = installedModelNames.contains(model.ollamaName)
-                        ? "\(model.displayName) 已安装、验证并设为当前照片识别模型。"
-                        : "\(model.displayName) 已验证并设为当前照片识别模型。"
+                    statusMessage = "\(model.displayName) 已安装、验证并设为 \(selectedInferenceEngine.displayName) 当前照片识别模型。"
                 } else {
                     statusMessage = "\(model.displayName) 已安装；当前 Ollama 包只标注文本输入，因此未替换照片识别模型。移动端请使用 LiteRT-LM 专用版本。"
                 }
@@ -100,6 +150,20 @@ extension BatchViewModel {
         runtimeProgress = nil
         statusMessage = "已暂不下载。可随时点击模型状态或在设置中重新配置。"
         announce(statusMessage)
+    }
+
+    func postponeEngineSelection() {
+        showEngineSelectionPrompt = false
+        modelHealth = .unavailable("尚未选择推理引擎")
+        statusMessage = "已暂不选择。点击模型状态或打开设置即可继续。"
+        announce(statusMessage)
+    }
+
+    private func installedModelsForCurrentEngine() async -> Set<String> {
+        switch selectedInferenceEngine {
+        case .mlx: return mlxRuntimeSetupService.installedModelNames()
+        case .ollama: return await runtimeSetupService.installedModelNames()
+        }
     }
 
     func startRecognition() {
@@ -186,7 +250,7 @@ extension BatchViewModel {
         statusMessage = "正在识别第 \(position) 张，共 \(total) 张。"
         do {
             let preferences = DescriptionPreferences.load()
-            let description = try await ollamaClient.describe(
+            let description = try await localVisionClient.describe(
                 job.url,
                 preferences: preferences
             ) { stage in

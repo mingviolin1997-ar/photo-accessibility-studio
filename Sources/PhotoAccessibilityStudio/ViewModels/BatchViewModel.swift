@@ -34,37 +34,49 @@ final class BatchViewModel: ObservableObject {
     @Published var statusMessage = "请选择照片开始。所有识别都在本机完成。"
     @Published var modelHealth: ModelHealth = .checking
     @Published var showRuntimeSetupPrompt = false
+    @Published var showEngineSelectionPrompt = false
     @Published var runtimeSetupReason = ""
     @Published var runtimeProgress: RuntimeProgress?
     @Published var isRuntimeInstalling = false
     @Published var recognitionProgress: Double?
     @Published var installedModelNames: Set<String> = []
     @Published var installingModelID: VisionModel?
+    @Published var selectedInferenceEngine: InferenceEngine
+    @Published var selectedVisionModel: VisionModel
 
-    var ollamaClient: OllamaClient
+    var localVisionClient: LocalVisionClient
     let metadataWriter: MetadataWriter
     let batchExportService: BatchExportService
     let stateStore: StateStore
     let runtimeSetupService: RuntimeSetupService
+    let mlxRuntimeSetupService: MLXRuntimeSetupService
     let progressSoundPlayer: ProgressSoundPlayer
     var processingTask: Task<Void, Never>?
     var recognitionProgressTask: Task<Void, Never>?
     var recognitionCompletedUnits = 0
     var recognitionTotalUnits = 0
 
-    init(ollamaClient: OllamaClient = .init(),
-         metadataWriter: MetadataWriter = .init(),
+    init(metadataWriter: MetadataWriter = .init(),
          stateStore: StateStore = .init(),
          runtimeSetupService: RuntimeSetupService? = nil,
+         mlxRuntimeSetupService: MLXRuntimeSetupService? = nil,
          batchExportService: BatchExportService? = nil,
          progressSoundPlayer: ProgressSoundPlayer? = nil) {
-        self.ollamaClient = ollamaClient
+        let storedEngine = InferenceEngine.stored()
+        let engine = storedEngine ?? .mlx
+        let model = VisionModel.stored()
+        self.selectedInferenceEngine = engine
+        self.selectedVisionModel = model
+        self.localVisionClient = LocalVisionClient(engine: engine, model: model)
         self.metadataWriter = metadataWriter
         self.batchExportService = batchExportService ?? BatchExportService(
             metadataWriter: metadataWriter
         )
         self.stateStore = stateStore
-        self.runtimeSetupService = runtimeSetupService ?? RuntimeSetupService()
+        let ollamaRuntime = runtimeSetupService ?? RuntimeSetupService()
+        self.runtimeSetupService = ollamaRuntime
+        self.mlxRuntimeSetupService = mlxRuntimeSetupService
+            ?? MLXRuntimeSetupService(metadataSetupService: ollamaRuntime)
         self.progressSoundPlayer = progressSoundPlayer ?? ProgressSoundPlayer()
         let recoveredJobs = stateStore.load().map { job in
             var recovered = job
@@ -88,12 +100,18 @@ final class BatchViewModel: ObservableObject {
         stateStore.save([])
         stateStore.saveHistory(recoveredHistory)
         selectionID = nil
-        checkModel()
+        if storedEngine == nil {
+            modelHealth = .unavailable("请先选择 MLX 或 Ollama")
+            statusMessage = "首次在 Mac 上运行，请选择本地推理引擎。推荐 MLX。"
+            showEngineSelectionPrompt = true
+        } else {
+            checkModel()
+        }
     }
 
     var selectedJob: PhotoJob? { jobs.first { $0.id == selectionID } }
-    var selectedVisionModel: VisionModel {
-        VisionModel.matching(ollamaName: ollamaClient.configuration.modelName) ?? .qwen35_4B
+    var currentModelIdentifier: String {
+        selectedVisionModel.identifier(for: selectedInferenceEngine)
     }
     var canDeleteSelected: Bool { !isProcessing && selectedJob != nil }
     var historyPhotoCount: Int {

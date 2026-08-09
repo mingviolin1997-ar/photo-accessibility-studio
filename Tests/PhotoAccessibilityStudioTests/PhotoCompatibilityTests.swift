@@ -54,8 +54,19 @@ final class PhotoCompatibilityTests: XCTestCase {
             throw XCTSkip("显式启用 RUN_SAMPLE_MODEL_INTEGRATION 后运行十张照片模型回归")
         }
         let photos = try supportedPhotos(in: folder)
-        let client = OllamaClient(configuration: AppConfiguration(modelName: "qwen3.5:4b"))
-        try await client.checkHealth()
+        let engine: InferenceEngine = ProcessInfo.processInfo.environment["PAS_INFERENCE_ENGINE"] == "mlx"
+            ? .mlx : .ollama
+        var retainedMLXService: MLXRuntimeSetupService?
+        if engine == .mlx {
+            let service = MLXRuntimeSetupService()
+            let missing = await service.inspect(model: .qwen35_4B)
+            XCTAssertNil(missing)
+            retainedMLXService = service
+        } else {
+            try await OllamaClient(configuration: AppConfiguration(modelName: "qwen3.5:4b"))
+                .checkHealth()
+        }
+        let client = LocalVisionClient(engine: engine, model: .qwen35_4B)
         for (offset, photo) in photos.enumerated() {
             let started = Date()
             do {
@@ -69,6 +80,7 @@ final class PhotoCompatibilityTests: XCTestCase {
                 XCTFail("\(photo.lastPathComponent)：\(error.localizedDescription)")
             }
         }
+        _ = retainedMLXService
     }
 
     private func supportedPhotos(in folder: URL) throws -> [URL] {

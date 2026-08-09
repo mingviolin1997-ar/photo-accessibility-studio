@@ -13,6 +13,7 @@ struct PhotoAccessibilityStudioApp: App {
             "includeCaptureAdvice": false,
             "alwaysRunIndependentReview": false,
             "selectedVisionModel": VisionModel.qwen35_4B.ollamaName,
+            "selectedVisionModelID": VisionModel.qwen35_4B.rawValue,
             "progressSoundEnabled": true,
             "historyRetentionDays": 30
         ])

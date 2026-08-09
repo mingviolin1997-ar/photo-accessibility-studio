@@ -123,6 +123,47 @@ final class PromptTests: XCTestCase {
         XCTAssertFalse(VisionModel.gemma3nE4B.supportsPhotoRecognitionInMacApp)
     }
 
+    func testEveryVisionModelHasMLXIdentifierAndPhotoSupport() {
+        for model in VisionModel.allCases {
+            XCTAssertTrue(model.mlxName.hasPrefix("mlx-community/"))
+            XCTAssertEqual(model.mlxRevision.count, 40)
+            XCTAssertTrue(model.supportsPhotoRecognition(on: .mlx))
+            XCTAssertFalse(model.downloadSize(for: .mlx).isEmpty)
+            XCTAssertFalse(model.recommendation(for: .mlx).isEmpty)
+        }
+        XCTAssertFalse(VisionModel.gemma3nE2B.supportsPhotoRecognition(on: .ollama))
+        XCTAssertFalse(VisionModel.gemma3nE4B.supportsPhotoRecognition(on: .ollama))
+    }
+
+    func testInferenceEngineRequiresExplicitFirstSelectionAndPersistsChoice() {
+        let suite = "pas-engine-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertNil(InferenceEngine.stored(defaults: defaults))
+        defaults.set(InferenceEngine.mlx.rawValue, forKey: "selectedInferenceEngine")
+        XCTAssertEqual(InferenceEngine.stored(defaults: defaults), .mlx)
+    }
+
+    func testLegacyOllamaModelPreferenceMigratesToStableModelIdentity() {
+        let suite = "pas-model-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("gemma4:e2b", forKey: "selectedVisionModel")
+        XCTAssertEqual(VisionModel.stored(defaults: defaults), .gemma4E2B)
+        defaults.set(VisionModel.gemma3nE4B.rawValue, forKey: "selectedVisionModelID")
+        XCTAssertEqual(VisionModel.stored(defaults: defaults), .gemma3nE4B)
+    }
+
+    func testRuntimeProgressCanDescribeIndeterminateMLXInstallStep() {
+        let progress = RuntimeProgress(step: "安装 MLX",
+                                       downloaded: 0,
+                                       total: 0,
+                                       bytesPerSecond: 0,
+                                       detailOverride: "正在准备独立环境")
+        XCTAssertNil(progress.fraction)
+        XCTAssertEqual(progress.detail, "正在准备独立环境")
+    }
+
     func testAdaptiveReviewIsDefaultAndStrictReviewCanBeEnabled() {
         let suite = "pas-review-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
