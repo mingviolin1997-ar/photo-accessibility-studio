@@ -16,6 +16,15 @@ final class MLXRuntimeSetupService {
     private let mlxVLMVersion = "0.6.6"
     private let port = 11_435
 
+    private struct ModelManifest: Decodable {
+        struct Entry: Decodable {
+            let path: String
+            let size: Int64
+        }
+        let revision: String
+        let files: [Entry]
+    }
+
     init(metadataSetupService: RuntimeSetupService = .init()) {
         self.metadataSetupService = metadataSetupService
     }
@@ -82,13 +91,12 @@ final class MLXRuntimeSetupService {
     }
 
     func isModelInstalled(_ model: VisionModel) -> Bool {
-        guard modelFilesPresent(model) else { return false }
         let marker = RuntimePaths.mlxModelRevisionMarker(for: model.mlxName)
         guard let revision = try? String(contentsOf: marker, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines) else {
             return false
         }
-        return revision == model.mlxRevision
+        return revision == model.mlxRevision && modelManifestMatches(model)
     }
 
     static func mostRecentIncompleteModel() -> VisionModel? {
@@ -124,23 +132,34 @@ final class MLXRuntimeSetupService {
         return revision == model.mlxRevision
     }
 
-    private func modelFilesPresent(_ model: VisionModel) -> Bool {
+    private func modelManifestMatches(_ model: VisionModel) -> Bool {
         let directory = RuntimePaths.mlxModelDirectory(for: model.mlxName)
-        let config = directory.appendingPathComponent("config.json")
-        guard FileManager.default.isReadableFile(atPath: config.path),
-              let enumerator = FileManager.default.enumerator(
-                at: directory,
-                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
-                options: [.skipsHiddenFiles]
-              ) else { return false }
-        while let file = enumerator.nextObject() as? URL {
-            guard file.pathExtension == "safetensors" else { continue }
-            let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-            if values?.isRegularFile == true, (values?.fileSize ?? 0) > 1_000_000 {
-                return true
-            }
+        return Self.validateModelManifest(at: directory, expectedRevision: model.mlxRevision)
+    }
+
+    static func validateModelManifest(at directory: URL,
+                                      expectedRevision: String) -> Bool {
+        let manifestURL = directory.appendingPathComponent(".pas-files.json")
+        guard let data = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONDecoder().decode(ModelManifest.self, from: data),
+              manifest.revision == expectedRevision,
+              !manifest.files.isEmpty,
+              manifest.files.contains(where: { $0.path == "config.json" }),
+              manifest.files.contains(where: { $0.path.hasSuffix(".safetensors") }) else {
+            return false
         }
-        return false
+        return manifest.files.allSatisfy { entry in
+            let components = entry.path.split(separator: "/")
+            guard !entry.path.hasPrefix("/"),
+                  !components.contains(".."),
+                  entry.size > 0 else { return false }
+            let file = directory.appendingPathComponent(entry.path)
+            guard FileManager.default.isReadableFile(atPath: file.path),
+                  let actual = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+                return false
+            }
+            return Int64(actual) == entry.size
+        }
     }
 
     private var environmentReady: Bool {
@@ -257,6 +276,12 @@ final class MLXRuntimeSetupService {
             throw RuntimeSetupError.modelPullFailed(Self.downloadFailure(from: output.standardOutput))
         }
         try Data(model.mlxRevision.utf8).write(to: marker, options: .atomic)
+        guard isModelInstalled(model) else {
+            try? FileManager.default.removeItem(at: marker)
+            throw RuntimeSetupError.verificationFailed(
+                "MLX 模型文件清单、固定版本或文件长度校验失败"
+            )
+        }
     }
 
     private static func downloadFailure(from output: String) -> String {
@@ -389,7 +414,7 @@ final class MLXRuntimeSetupService {
 
     deinit { stopServer() }
 
-    private static let modelDownloaderScript = #"""
+    static let modelDownloaderScript = #"""
 import json
 import os
 import sys
@@ -525,7 +550,22 @@ try:
         completed = min(total, base + (expected or actual))
         emit("已完成模型文件：" + filename, completed, total)
 
-    emit("模型下载完成", total, total, detail="所有文件已下载，正在写入版本标记并验证")
+    manifest_files = []
+    for sibling in files:
+        target = local_dir / sibling.rfilename
+        if not target.is_file():
+            raise RuntimeError("模型文件缺失：" + sibling.rfilename)
+        actual = target.stat().st_size
+        expected = sizes[sibling.rfilename]
+        if expected > 0 and actual != expected:
+            raise RuntimeError("模型文件长度不一致：%s，实际 %d，预期 %d" % (sibling.rfilename, actual, expected))
+        manifest_files.append({"path": sibling.rfilename, "size": actual})
+    manifest = {"revision": revision, "files": manifest_files}
+    manifest_path = local_dir / ".pas-files.json"
+    manifest_temp = local_dir / ".pas-files.json.installing"
+    manifest_temp.write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    os.replace(manifest_temp, manifest_path)
+    emit("模型下载完成", total, total, detail="所有文件、固定版本和文件长度已写入完整性清单")
 except Exception as error:
     with state_lock:
         snapshot = dict(state)

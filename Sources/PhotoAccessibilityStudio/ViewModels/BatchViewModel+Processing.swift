@@ -20,14 +20,22 @@ extension BatchViewModel {
                 missing = await runtimeSetupService.inspect(modelName: selectedVisionModel.ollamaName)
             }
             if let missing {
-                runtimeSetupReason = missing
+                let previous = RuntimeFailureStore.matching(engine: selectedInferenceEngine,
+                                                            model: selectedVisionModel)
+                runtimeSetupReason = previous.map {
+                    "\(missing)。上次配置未完成：\($0.reason)"
+                } ?? missing
                 modelHealth = .unavailable(missing)
-                statusMessage = "需要配置：\(missing)。尚未开始下载。"
+                statusMessage = previous.map {
+                    "上次配置失败：\($0.reason)。当前仍需配置：\(missing)，可以继续下载。"
+                } ?? "需要配置：\(missing)。尚未开始下载。"
                 showRuntimeSetupPrompt = true
                 announce(statusMessage)
             } else {
                 modelHealth = .ready
                 UserDefaults.standard.removeObject(forKey: "pendingVisionModelID")
+                RuntimeFailureStore.clear(engine: selectedInferenceEngine,
+                                          model: selectedVisionModel)
                 statusMessage = "本地 \(selectedVisionModel.displayName)、\(selectedInferenceEngine.displayName) 与 ExifTool 已就绪。"
             }
         }
@@ -81,6 +89,8 @@ extension BatchViewModel {
                 modelHealth = .ready
                 installedModelNames = await installedModelsForCurrentEngine()
                 UserDefaults.standard.removeObject(forKey: "pendingVisionModelID")
+                RuntimeFailureStore.clear(engine: selectedInferenceEngine,
+                                          model: selectedVisionModel)
                 statusMessage = "自动配置完成，本地 \(selectedVisionModel.displayName) 与 \(selectedInferenceEngine.displayName) 已就绪。"
                 announce(statusMessage)
             } catch is CancellationError {
@@ -92,6 +102,9 @@ extension BatchViewModel {
                                                   bytesPerSecond: 0,
                                                   detailOverride: "已下载文件已保留；点击当前模型即可断点续传")
                 statusMessage = "已取消自动配置；现有下载进度已保留，可随时重试。"
+                RuntimeFailureStore.save(engine: selectedInferenceEngine,
+                                         model: selectedVisionModel,
+                                         reason: statusMessage)
                 announce(statusMessage)
             } catch {
                 isRuntimeInstalling = false
@@ -102,6 +115,9 @@ extension BatchViewModel {
                                                   total: runtimeProgress?.total ?? 0,
                                                   bytesPerSecond: 0,
                                                   detailOverride: error.localizedDescription)
+                RuntimeFailureStore.save(engine: selectedInferenceEngine,
+                                         model: selectedVisionModel,
+                                         reason: error.localizedDescription)
                 AppLogger.shared.error(statusMessage)
                 announce(statusMessage)
             }
@@ -161,6 +177,7 @@ extension BatchViewModel {
                     UserDefaults.standard.removeObject(forKey: "pendingVisionModelID")
                     statusMessage = "\(model.displayName) 已安装；当前 Ollama 包只标注文本输入，因此未替换照片识别模型。移动端请使用 LiteRT-LM 专用版本。"
                 }
+                RuntimeFailureStore.clear(engine: selectedInferenceEngine, model: model)
                 announce(statusMessage)
             } catch is CancellationError {
                 modelHealth = .unavailable("下载已取消，可断点续传")
@@ -170,6 +187,9 @@ extension BatchViewModel {
                                                   bytesPerSecond: 0,
                                                   detailOverride: "已有文件已保留；再次点击该模型即可继续")
                 statusMessage = "已取消 \(model.displayName) 下载；已有进度已保留。"
+                RuntimeFailureStore.save(engine: selectedInferenceEngine,
+                                         model: model,
+                                         reason: statusMessage)
                 announce(statusMessage)
             } catch {
                 statusMessage = "\(model.displayName) 配置失败：\(error.localizedDescription)"
@@ -179,6 +199,9 @@ extension BatchViewModel {
                                                   total: runtimeProgress?.total ?? 0,
                                                   bytesPerSecond: 0,
                                                   detailOverride: error.localizedDescription)
+                RuntimeFailureStore.save(engine: selectedInferenceEngine,
+                                         model: model,
+                                         reason: error.localizedDescription)
                 AppLogger.shared.error(statusMessage)
                 announce(statusMessage)
             }

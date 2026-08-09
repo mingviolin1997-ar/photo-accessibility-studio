@@ -16,6 +16,7 @@ enum RuntimePaths {
     static var ollama: URL { bin.appendingPathComponent("ollama") }
     static var uv: URL { bin.appendingPathComponent("uv") }
     static var models: URL { root.appendingPathComponent("models", isDirectory: true) }
+    static var downloads: URL { root.appendingPathComponent("downloads", isDirectory: true) }
     static var mlxRoot: URL { root.appendingPathComponent("mlx", isDirectory: true) }
     static var mlxEnvironment: URL { mlxRoot.appendingPathComponent("environment", isDirectory: true) }
     static var mlxPython: URL { mlxEnvironment.appendingPathComponent("bin/python") }
@@ -39,6 +40,11 @@ enum RuntimePaths {
     static func mlxModelRevisionMarker(for identifier: String) -> URL {
         mlxModelDirectory(for: identifier).appendingPathComponent(".pas-revision")
     }
+
+    static func mlxModelManifest(for identifier: String) -> URL {
+        mlxModelDirectory(for: identifier).appendingPathComponent(".pas-files.json")
+    }
+
 }
 
 enum RuntimeToolLocator {

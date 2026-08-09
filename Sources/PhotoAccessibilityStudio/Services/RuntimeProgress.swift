@@ -51,3 +51,41 @@ enum RuntimeSetupError: LocalizedError {
         }
     }
 }
+
+enum RuntimeDownloadDiagnostics {
+    static func message(for error: Error) -> String {
+        if error is CancellationError { return "下载已取消，现有进度已保留" }
+        if let setup = error as? RuntimeSetupError {
+            switch setup {
+            case let .downloadFailed(reason), let .modelPullFailed(reason):
+                return reason
+            default:
+                return setup.localizedDescription
+            }
+        }
+        let value = error.localizedDescription
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorTimedOut:
+                return "下载服务器长时间没有返回数据，连接超时"
+            case NSURLErrorNotConnectedToInternet:
+                return "当前没有可用网络连接"
+            case NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed:
+                return "无法解析下载服务器地址；请检查 DNS、网络或代理"
+            case NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost:
+                return "无法连接下载服务器或连接已中断；请检查网络、代理或防火墙"
+            case NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateUntrusted,
+                 NSURLErrorServerCertificateHasBadDate, NSURLErrorServerCertificateHasUnknownRoot:
+                return "与下载服务器建立安全连接失败；请检查系统时间、网络或代理证书"
+            default:
+                break
+            }
+        }
+        if nsError.domain == NSCocoaErrorDomain,
+           nsError.code == CocoaError.fileWriteOutOfSpace.rawValue {
+            return "磁盘空间不足；请释放空间后重试，已下载部分仍会保留"
+        }
+        return value.isEmpty ? String(describing: type(of: error)) : value
+    }
+}
