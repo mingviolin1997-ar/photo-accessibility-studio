@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.PhotoAccessibility" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="colorPrimary">#315DA8</item>
+        <item name="colorSecondary">#386A20</item>
+    </style>
+</resources>

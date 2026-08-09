@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:id="@+id/appHeading"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/app_name"
+            android:textAppearance="?attr/textAppearanceHeadlineMedium" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/app_summary" />
+
+        <TextView
+            android:id="@+id/modelHeading"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/model_heading"
+            android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+        <TextView
+            android:id="@+id/modelStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:accessibilityLiveRegion="polite"
+            android:text="@string/model_checking" />
+
+        <ProgressBar
+            android:id="@+id/modelProgressBar"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:max="100"
+            android:visibility="gone"
+            android:contentDescription="@string/model_progress" />
+
+        <TextView
+            android:id="@+id/modelProgressText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/checkModelButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minHeight="56dp"
+            android:text="@string/model_button" />
+
+        <TextView
+            android:id="@+id/styleHeading"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/style_heading"
+            android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+        <RadioGroup
+            android:id="@+id/styleGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton android:id="@+id/styleLow" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:text="@string/style_low" />
+            <RadioButton android:id="@+id/styleMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:text="@string/style_medium" />
+            <RadioButton android:id="@+id/styleHigh" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:text="@string/style_high" />
+            <RadioButton android:id="@+id/stylePhotographer" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:text="@string/style_photographer" />
+        </RadioGroup>
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/adviceSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minHeight="56dp"
+            android:text="@string/capture_advice" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/autoWriteSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:text="@string/auto_write" />
+
+        <TextView
+            android:id="@+id/batchHeading"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/batch_heading"
+            android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+        <Button android:id="@+id/addPhotosButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp" android:text="@string/add_photos" />
+        <Button android:id="@+id/selectAllButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp" android:text="@string/select_all" />
+        <Button android:id="@+id/deselectAllButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp" android:text="@string/deselect_all" />
+        <Button android:id="@+id/recognizeButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp" android:text="@string/recognize" />
+        <Button android:id="@+id/writeSelectedButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp" android:text="@string/write_selected" />
+
+        <ProgressBar
+            android:id="@+id/progressBar"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:max="100"
+            android:contentDescription="@string/batch_progress" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:accessibilityLiveRegion="polite"
+            android:text="@string/choose_photos" />
+
+        <TextView
+            android:id="@+id/queueHeading"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/queue_empty"
+            android:textAppearance="?attr/textAppearanceTitleLarge" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/photoList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:importantForAccessibility="yes"
+            android:nestedScrollingEnabled="false" />
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>
