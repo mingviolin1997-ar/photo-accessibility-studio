@@ -15,13 +15,14 @@ enum AccessibilityDescriptionPrompt {
     7. 细节冲突时舍弃不确定细节；宁可少写，也不编造。不得猜测图像的用途、创作者、拍摄地点或画面外的信息。
     8. 只有现实照片才可使用景深、对焦、曝光、光源方向、快门效果等摄影判断，而且必须能从画面直接观察到。纯色、锐利边缘或平面形状不等于对焦准确；平面图形没有景深；不得从均匀颜色推断真实光源方向。
     9. 客观内容与主观观感必须分开。主观内容最多一句，并以“画面给人……”开头；不要把观感写成事实。
+    10. 输出前在内部重新核对一次主体、数量、方向、清晰文字和拍摄建议。若仍有任何会影响准确性的视觉疑点，将 needsReview 设为 true，并在 uncertainties 中用短句列出；没有实质疑点时设为 false 和空数组。
 
     本次详细度：\(preferences.style.promptRequirement)
 
     拍摄建议：\(adviceInstruction(preferences.includeCaptureAdvice))
 
     只输出严格 JSON，不要 Markdown、标题、解释或思考过程：
-    {"isPhoto":true或false,"description":"照片描述正文","advice":"拍摄建议正文或空字符串"}
+    {"isPhoto":true或false,"description":"照片描述正文","advice":"拍摄建议正文或空字符串","needsReview":true或false,"uncertainties":["需要独立核对的疑点"]}
     """
     }
 
@@ -66,7 +67,7 @@ enum AccessibilityDescriptionPrompt {
         质检问题 JSON 数组：\(issueJSON)
 
         只输出严格 JSON，不要 Markdown、标题、解释或思考过程：
-        {"isPhoto":true或false,"description":"修正后的照片描述正文","advice":"拍摄建议正文或空字符串"}
+        {"isPhoto":true或false,"description":"修正后的照片描述正文","advice":"拍摄建议正文或空字符串","needsReview":false,"uncertainties":[]}
         """
     }
 

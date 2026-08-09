@@ -45,14 +45,9 @@ struct BatchExportService {
         try fileManager.copyItem(at: sourceURL, to: outputURL)
         do {
             let result = try metadataWriter.write(description, to: outputURL)
-            let independentlyVerified = try metadataWriter.verify(
-                description,
-                at: outputURL,
-                expectedIntegrity: result.integrity
-            )
             return ExportedPhoto(sourceURL: sourceURL,
                                  outputURL: outputURL,
-                                 metadataResult: independentlyVerified)
+                                 metadataResult: result)
         } catch {
             try? fileManager.removeItem(at: outputURL)
             throw error

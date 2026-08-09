@@ -41,19 +41,20 @@ struct XMPPacketBuilder {
         opening += " xmlns:Iptc4xmpExt=\"\(Self.namespace)\"\(suffix)"
         xml.replaceSubrange(openingRange, with: opening)
         let element = "<\(Self.directElement)>\(escape(description))</\(Self.directElement)>"
-        if opening.hasSuffix("/>") {
-            guard let refreshed = xml.range(of: #"<rdf:Description\b[^>]*/>"#,
-                                            options: .regularExpression) else {
-                throw XMPPacketError.malformedPacket
-            }
+        guard let refreshed = xml.range(of: #"<rdf:Description\b[^>]*>"#,
+                                        options: .regularExpression) else {
+            throw XMPPacketError.malformedPacket
+        }
+        if String(xml[refreshed]).hasSuffix("/>") {
             var expanded = String(xml[refreshed])
             expanded.removeLast(2)
             expanded += ">\n\(element)\n</rdf:Description>"
             xml.replaceSubrange(refreshed, with: expanded)
-        } else if let closing = xml.range(of: "</rdf:Description>") {
-            xml.insert(contentsOf: "\n\(element)\n", at: closing.lowerBound)
         } else {
-            throw XMPPacketError.malformedPacket
+            // Insert immediately after the first (top-level) rdf:Description
+            // opening tag. Searching for the first closing tag is incorrect for
+            // Lightroom packets, which may contain nested rdf:Description nodes.
+            xml.insert(contentsOf: "\n\(element)\n", at: refreshed.upperBound)
         }
         let data = Data(xml.utf8)
         try validateRaw(data)

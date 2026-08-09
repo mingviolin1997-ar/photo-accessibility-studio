@@ -16,6 +16,8 @@ struct ContentView: View {
                 .overlay {
                     if viewModel.jobs.isEmpty { EmptyQueueView() }
                 }
+                .layoutPriority(1)
+                HistorySectionView(viewModel: viewModel)
                 statusFooter
             }
             .navigationSplitViewColumnWidth(min: 330, ideal: 390)
@@ -23,14 +25,22 @@ struct ContentView: View {
             InspectorView(viewModel: viewModel)
         }
         .toolbar { toolbar }
-        .sheet(isPresented: $viewModel.isSettingsPresented) {
-            SettingsView(viewModel: viewModel)
+        .confirmationDialog("选择这台 Mac 的本地推理引擎",
+                            isPresented: $viewModel.showEngineSelectionPrompt,
+                            titleVisibility: .visible) {
+            Button("使用 MLX（推荐）") { viewModel.chooseInferenceEngine(.mlx) }
+                .accessibilityHint("针对 Apple 芯片优化；缺少时会继续询问是否自动下载配置")
+            Button("使用 Ollama") { viewModel.chooseInferenceEngine(.ollama) }
+                .accessibilityHint("继续使用兼容性成熟的 Ollama 本地服务")
+            Button("稍后决定", role: .cancel) { viewModel.postponeEngineSelection() }
+        } message: {
+            Text("MLX 通常在 Apple 芯片上速度更快、能耗更低；Ollama 适合已经安装相关模型的用户。两者都只在本机处理照片，切换不会影响无障碍描述写入。")
         }
         .alert("自动下载并配置本地环境？", isPresented: $viewModel.showRuntimeSetupPrompt) {
             Button("下载并自动配置") { viewModel.acceptRuntimeSetup() }
             Button("暂不下载", role: .cancel) { viewModel.declineRuntimeSetup() }
         } message: {
-            Text("检测到缺少：\(viewModel.runtimeSetupReason)。应用只会在您确认后下载 Ollama、ExifTool 或 Qwen3.5 4B 中缺少的部分；下载后自动安装并校验。模型需要数 GB 空间，建议使用稳定网络。")
+            Text("检测到缺少：\(viewModel.runtimeSetupReason)。应用只会在您确认后下载 \(viewModel.selectedInferenceEngine.displayName)、ExifTool 或当前视觉模型中缺少的部分；下载后自动安装并校验。模型需要数 GB 空间，建议使用稳定网络。")
         }
     }
 
@@ -51,13 +61,18 @@ struct ContentView: View {
             .buttonStyle(.link)
             .accessibilityLabel("本地模型状态")
             .accessibilityValue(viewModel.modelHealth.label)
-            .accessibilityHint("重新检查 Ollama 与 Qwen 模型")
+            .accessibilityHint("重新检查当前推理引擎与视觉模型")
             HStack {
                 Button("全选结果") { viewModel.selectAllForWriting() }
                     .disabled(viewModel.jobs.isEmpty || viewModel.isProcessing)
                 Button("全部取消") { viewModel.deselectAllForWriting() }
                     .disabled(viewModel.jobs.isEmpty || viewModel.isProcessing)
             }
+            Button("清空当前工作区", role: .destructive) {
+                viewModel.clearCurrentWorkspace()
+            }
+            .disabled(viewModel.jobs.isEmpty || viewModel.isProcessing)
+            .accessibilityHint("有描述的项目进入历史；只清空软件工作区，不删除磁盘中的照片")
         }
         .padding()
     }
@@ -111,7 +126,7 @@ struct ContentView: View {
                 Label("开始识别", systemImage: "sparkles")
             }
             .disabled(!viewModel.canRecognize)
-            .accessibilityHint("使用本机 Qwen 模型依次生成描述")
+            .accessibilityHint("使用本机 \(viewModel.selectedInferenceEngine.displayName) 和 \(viewModel.selectedVisionModel.displayName) 依次生成描述")
 
             if viewModel.isProcessing {
                 Button(role: .cancel, action: viewModel.cancelProcessing) {
@@ -119,6 +134,13 @@ struct ContentView: View {
                 }
                 .keyboardShortcut(.cancelAction)
             }
+
+            Button(action: viewModel.removeSelected) {
+                Label("删除所选", systemImage: "trash")
+            }
+            .disabled(!viewModel.canDeleteSelected)
+            .keyboardShortcut(.delete, modifiers: .command)
+            .accessibilityHint("从当前工作区删除左侧素材和右侧对应结果；原始照片保留在磁盘")
 
             Button(action: viewModel.chooseExportFolder) {
                 Label("批量导出", systemImage: "square.and.arrow.up.on.square")
@@ -133,9 +155,10 @@ struct ContentView: View {
             .disabled(!viewModel.canWrite)
             .accessibilityHint("直接修改已勾选的原始照片；通常建议使用批量导出保留原始素材")
 
-            Button { viewModel.isSettingsPresented = true } label: {
+            SettingsLink {
                 Label("设置", systemImage: "gearshape")
             }
+            .accessibilityHint("打开设置窗口；也可以按 Command-逗号")
         }
     }
 }

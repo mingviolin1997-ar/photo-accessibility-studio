@@ -46,7 +46,9 @@ struct ImageIntegrity {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { throw ImageIntegrityError.cannotDecode }
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        let digest = SHA256.hash(data: Data(pixels)).map { String(format: "%02x", $0) }.joined()
+        var hasher = SHA256()
+        pixels.withUnsafeBytes { hasher.update(bufferPointer: $0) }
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
         return ImageIntegritySnapshot(
             fileName: url.lastPathComponent,
             pixelWidth: width,

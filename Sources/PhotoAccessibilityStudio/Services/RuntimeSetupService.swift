@@ -4,7 +4,6 @@ final class RuntimeSetupService {
     typealias ProgressHandler = (RuntimeProgress) -> Void
 
     private let runner = ProcessRunner()
-    private let ollamaClient: OllamaClient
     private var ollamaProcess: Process?
 
     private let ollamaArchive = URL(string:
@@ -16,11 +15,28 @@ final class RuntimeSetupService {
     private let exifBytes: Int64 = 7_916_358
     private let exifSHA = "668ea3acececb7235fbd0f4900e72d5f12c9b07e5c778fd36cb1e9b5828fd65a"
 
-    init(ollamaClient: OllamaClient = .init()) {
-        self.ollamaClient = ollamaClient
+    init() {}
+
+    func metadataToolMissingReason() -> String? {
+        RuntimeToolLocator.exifTool() == nil ? "ExifTool 元数据环境" : nil
     }
 
-    func inspect() async -> String? {
+    func installMetadataToolIfNeeded(progress: @escaping ProgressHandler) async throws {
+        guard RuntimeToolLocator.exifTool() == nil else { return }
+        try FileManager.default.createDirectory(at: RuntimePaths.root,
+                                                withIntermediateDirectories: true)
+        let archive = try await RuntimeFileDownloader().download(
+            from: exifArchive,
+            step: "正在下载 ExifTool 元数据环境",
+            expectedBytes: exifBytes,
+            expectedSHA256: exifSHA,
+            progress: progress
+        )
+        defer { try? FileManager.default.removeItem(at: archive) }
+        try installExifTool(from: archive)
+    }
+
+    func inspect(modelName: String = AppConfiguration().modelName) async -> String? {
         var missing: [String] = []
         if RuntimeToolLocator.exifTool() == nil { missing.append("ExifTool 元数据环境") }
 
@@ -31,26 +47,17 @@ final class RuntimeSetupService {
         if !(await serverResponding()) {
             missing.append("Ollama 本地推理环境")
         } else {
-            do { try await ollamaClient.checkHealth() }
-            catch { missing.append("Qwen3.5 4B 模型") }
+            do { try await client(for: modelName).checkHealth() }
+            catch { missing.append("\(modelDisplayName(modelName)) 模型") }
         }
         return missing.isEmpty ? nil : missing.joined(separator: "、")
     }
 
-    func install(progress: @escaping ProgressHandler) async throws {
+    func install(modelName: String = AppConfiguration().modelName,
+                 progress: @escaping ProgressHandler) async throws {
         try FileManager.default.createDirectory(at: RuntimePaths.root,
                                                 withIntermediateDirectories: true)
-        if RuntimeToolLocator.exifTool() == nil {
-            let archive = try await RuntimeFileDownloader().download(
-                from: exifArchive,
-                step: "正在下载 ExifTool 元数据环境",
-                expectedBytes: exifBytes,
-                expectedSHA256: exifSHA,
-                progress: progress
-            )
-            defer { try? FileManager.default.removeItem(at: archive) }
-            try installExifTool(from: archive)
-        }
+        try await installMetadataToolIfNeeded(progress: progress)
 
         if !(await serverResponding()) {
             var executable = RuntimeToolLocator.ollama()
@@ -71,16 +78,25 @@ final class RuntimeSetupService {
             guard await waitForServer() else { throw RuntimeSetupError.serverUnavailable }
         }
 
-        do { try await ollamaClient.checkHealth() }
-        catch { try await pullModel(progress: progress) }
+        do { try await client(for: modelName).checkHealth() }
+        catch { try await pullModel(modelName: modelName, progress: progress) }
 
         guard RuntimeToolLocator.exifTool() != nil else {
             throw RuntimeSetupError.verificationFailed("ExifTool 不可用")
         }
-        do { try await ollamaClient.checkHealth() }
+        do { try await client(for: modelName).checkHealth() }
         catch { throw RuntimeSetupError.verificationFailed(error.localizedDescription) }
-        progress(RuntimeProgress(step: "本地环境与 Qwen3.5 4B 已配置完成",
+        progress(RuntimeProgress(step: "本地环境与 \(modelDisplayName(modelName)) 已配置完成",
                                  downloaded: 1, total: 1, bytesPerSecond: 0))
+    }
+
+    func installedModelNames() async -> Set<String> {
+        if !(await serverResponding()), let executable = RuntimeToolLocator.ollama() {
+            try? startOllama(executable)
+            _ = await waitForServer()
+        }
+        guard await serverResponding() else { return [] }
+        return (try? await client(for: VisionModel.qwen35_4B.ollamaName).installedModelNames()) ?? []
     }
 
     private func installOllama(from archive: URL) throws {
@@ -177,7 +193,43 @@ final class RuntimeSetupService {
         return false
     }
 
-    private func pullModel(progress: @escaping ProgressHandler) async throws {
+    private func pullModel(modelName: String,
+                           progress: @escaping ProgressHandler) async throws {
+        var lastError: Error = RuntimeSetupError.modelPullFailed("未知错误")
+        for attempt in 1...3 {
+            progress(RuntimeProgress(
+                step: "正在连接 Ollama 模型下载服务",
+                downloaded: 0,
+                total: 0,
+                bytesPerSecond: 0,
+                detailOverride: "第 \(attempt) 次连接；连续 60 秒无数据会自动重试"
+            ))
+            do {
+                try await pullModelOnce(modelName: modelName, progress: progress)
+                return
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+                if attempt < 3 {
+                    progress(RuntimeProgress(
+                        step: "Ollama 下载中断，准备自动重试",
+                        downloaded: 0,
+                        total: 0,
+                        bytesPerSecond: 0,
+                        detailOverride: "\(downloadFailureReason(error))；2 秒后进行第 \(attempt + 1) 次连接"
+                    ))
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                }
+            }
+        }
+        throw RuntimeSetupError.modelPullFailed(
+            "\(downloadFailureReason(lastError))；已尝试 3 次，Ollama 会保留可续传的模型分层"
+        )
+    }
+
+    private func pullModelOnce(modelName: String,
+                               progress: @escaping ProgressHandler) async throws {
         struct PullRequest: Encodable { let model: String; let stream = true }
         struct PullStatus: Decodable {
             let status: String?
@@ -190,9 +242,9 @@ final class RuntimeSetupService {
         request.httpMethod = "POST"
         request.timeoutInterval = 12 * 60 * 60
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(PullRequest(model: ollamaClient.configuration.modelName))
+        request.httpBody = try JSONEncoder().encode(PullRequest(model: modelName))
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 300
+        configuration.timeoutIntervalForRequest = 60
         configuration.timeoutIntervalForResource = 12 * 60 * 60
         let session = URLSession(configuration: configuration)
         let (bytes, response) = try await session.bytes(for: request)
@@ -222,11 +274,31 @@ final class RuntimeSetupService {
                 lastBytes = completed
                 lastTime = now
             }
-            progress(RuntimeProgress(step: value.status ?? "正在下载 Qwen3.5 4B 模型",
+            progress(RuntimeProgress(step: value.status ?? "正在下载 \(modelDisplayName(modelName)) 模型",
                                      downloaded: completed,
                                      total: total,
                                      bytesPerSecond: speed))
         }
+    }
+
+    private func downloadFailureReason(_ error: Error) -> String {
+        let value = error.localizedDescription
+        let lower = value.lowercased()
+        if lower.contains("timed out") || lower.contains("timeout") {
+            return "连续 60 秒没有收到模型数据，连接超时"
+        }
+        if lower.contains("offline") || lower.contains("connect") || lower.contains("network") {
+            return "无法连接模型下载服务；请检查网络、代理和 Ollama 状态"
+        }
+        return value
+    }
+
+    private func client(for modelName: String) -> OllamaClient {
+        OllamaClient(configuration: AppConfiguration(modelName: modelName))
+    }
+
+    private func modelDisplayName(_ modelName: String) -> String {
+        VisionModel.matching(ollamaName: modelName)?.displayName ?? modelName
     }
 
     deinit {
