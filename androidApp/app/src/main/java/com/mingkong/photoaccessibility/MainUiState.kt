@@ -18,6 +18,8 @@ data class MainUiState(
     val selectedEngine: InferenceEngine = InferenceEngine.LITERT_SMART,
     val selectedModel: VisionModel = VisionModel.QWEN_35_4B,
     val installedModels: Set<VisionModel> = emptySet(),
+    val engineReady: Boolean = false,
+    val engineDiagnostic: String = "正在检查 APK 内置 LiteRT-LM 引擎。",
     val activeEngineLabel: String = "尚未加载",
     val style: DescriptionStyle = DescriptionStyle.MEDIUM,
     val includeAdvice: Boolean = false,

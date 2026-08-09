@@ -3,6 +3,7 @@
     <string name="app_summary">用可切换的本机视觉模型批量生成中文描述，并安全写入照片的扁平 XMP 字段。</string>
     <string name="model_heading">推理引擎与视觉模型</string>
     <string name="model_checking">正在检查 LiteRT-LM 推理引擎和本地视觉模型。</string>
+    <string name="engine_checking">正在检查 APK 内置 LiteRT-LM 引擎；安卓端无需单独下载引擎。</string>
     <string name="active_engine_not_loaded">当前实际后端：尚未加载</string>
     <string name="active_engine_format">当前实际后端：%1$s</string>
     <string name="choose_engine">选择推理引擎</string>

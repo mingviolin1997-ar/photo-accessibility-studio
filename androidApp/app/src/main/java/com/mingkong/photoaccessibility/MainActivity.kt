@@ -163,18 +163,22 @@ class MainActivity : AppCompatActivity() {
             modelStatus.announceForAccessibility(state.modelStatus)
             lastModelAnnouncement = state.modelStatus
         }
+        findViewById<TextView>(R.id.engineDiagnosticText).apply {
+            text = state.engineDiagnostic
+            contentDescription = "内置推理引擎检查：${state.engineDiagnostic}"
+        }
         findViewById<TextView>(R.id.activeEngineText).text =
             getString(R.string.active_engine_format, state.activeEngineLabel)
         findViewById<Button>(R.id.chooseEngineButton).apply {
-            text = "推理引擎：${state.selectedEngine.displayName}"
-            contentDescription = "$text。点击切换；${state.selectedEngine.description}"
-            isEnabled = !state.busy && !state.downloadingModel
+            text = "推理模式：${state.selectedEngine.displayName}（引擎已内置）"
+            contentDescription = "$text。点击切换运行模式；${state.selectedEngine.description}"
+            isEnabled = state.engineReady && !state.busy && !state.downloadingModel
         }
         findViewById<Button>(R.id.chooseModelButton).apply {
             val installed = if (state.selectedModel in state.installedModels) "，已安装" else "，未安装"
             text = "视觉模型：${state.selectedModel.displayName}$installed"
             contentDescription = "$text。点击查看模型说明并切换"
-            isEnabled = !state.busy && !state.downloadingModel
+            isEnabled = state.engineReady && !state.busy && !state.downloadingModel
         }
 
         val modelProgress = findViewById<ProgressBar>(R.id.modelProgressBar)
@@ -207,7 +211,7 @@ class MainActivity : AppCompatActivity() {
             state.jobs.any { it.description.isNotBlank() }
         findViewById<Button>(R.id.checkModelButton).apply {
             text = "下载或检查当前模型（${state.selectedModel.downloadSize}）"
-            isEnabled = !state.downloadingModel && !state.busy
+            isEnabled = state.engineReady && !state.downloadingModel && !state.busy
         }
         findViewById<Button>(R.id.deleteModelButton).apply {
             text = "移除 ${state.selectedModel.displayName} 以释放空间"
@@ -329,9 +333,9 @@ class MainActivity : AppCompatActivity() {
         MaterialAlertDialogBuilder(this)
             .setTitle("下载并自动配置 ${model.displayName}？")
             .setMessage(
-                "LiteRT-LM 已随应用提供。本机还没有 ${model.displayName}，下载量${model.downloadSize}，" +
+                "LiteRT-LM 0.15.0 引擎已经包含在 APK 中，不会也不需要另行下载。本机还没有 ${model.displayName}，下载量${model.downloadSize}，" +
                     "支持断点续传，完成后会核对固定版本、文件长度和 SHA-256。" +
-                    "建议使用 Wi-Fi 并额外预留至少 768MB 校验空间。\n\n" +
+                    "建议使用 Wi-Fi；除剩余下载量外，另需保留至少 256MB 运行空间。\n\n" +
                     "${model.recommendation}\n\n$licenseNote"
             )
             .apply { if (tokenInput != null) setView(tokenInput) }
@@ -350,7 +354,7 @@ class MainActivity : AppCompatActivity() {
         val labels = engines.map { "${it.displayName}。${it.description}" }.toTypedArray()
         val selected = engines.indexOf(viewModel.state.value.selectedEngine)
         MaterialAlertDialogBuilder(this)
-            .setTitle("选择 Android 推理引擎")
+            .setTitle("选择 Android 推理模式（引擎已内置）")
             .setSingleChoiceItems(labels, selected) { dialog, which ->
                 viewModel.chooseEngine(engines[which])
                 dialog.dismiss()

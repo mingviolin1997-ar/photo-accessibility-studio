@@ -26,6 +26,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val downloader = ModelDownloader(application)
     private val metadataWriter = ImageMetadataWriter(resolver)
     private val runtime = LiteRtVisionRuntime(resolver, application.cacheDir)
+    private val engineDiagnostic = LiteRtEngineDiagnostics.inspect()
     private var modelDownloadJob: Job? = null
     private val historyRetentionDays =
         settings.getInt("historyRetentionDays", 30).coerceIn(1, 365)
@@ -57,7 +58,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         historyRetentionDays = historyRetentionDays,
         selectedEngine = initialEngine,
         selectedModel = initialModel,
-        installedModels = downloader.installedModels()
+        installedModels = downloader.installedModels(),
+        engineReady = engineDiagnostic.ready,
+        engineDiagnostic = engineDiagnostic.message
     ))
     val state: StateFlow<MainUiState> = _state.asStateFlow()
 
@@ -65,6 +68,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         queueStore.save(jobs)
         queueStore.saveHistory(history)
         when {
+            !engineDiagnostic.ready -> _state.update {
+                it.copy(
+                    modelStatus = "内置推理引擎自检失败：${engineDiagnostic.message}",
+                    activeEngineLabel = "不可用"
+                )
+            }
             storedEngine == null -> _state.update {
                 it.copy(
                     modelStatus = "首次使用，请先选择 LiteRT-LM 智能加速或 CPU 兼容模式。",
@@ -73,8 +82,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             downloader.isReady(initialModel) -> loadDownloadedModel()
             else -> _state.update {
+                val lastFailure = settings.getString("lastModelDownloadFailure", null)
                 it.copy(
-                    modelStatus = "LiteRT-LM 已内置；尚未下载 ${initialModel.displayName}。",
+                    modelStatus = if (lastFailure.isNullOrBlank()) {
+                        "LiteRT-LM 引擎已内置；尚未下载 ${initialModel.displayName}。"
+                    } else {
+                        "上次模型下载失败：$lastFailure。可以重新尝试并断点续传。"
+                    },
                     setupPromptPending = true
                 )
             }
@@ -90,7 +104,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun requestEngineChoice() {
-        if (_state.value.busy || _state.value.downloadingModel) return
+        if (_state.value.busy || _state.value.downloadingModel || !_state.value.engineReady) return
         _state.update { it.copy(engineChoicePending = true) }
     }
 
@@ -100,7 +114,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun chooseEngine(selected: InferenceEngine) {
-        if (_state.value.busy || _state.value.downloadingModel) return
+        if (_state.value.busy || _state.value.downloadingModel || !_state.value.engineReady) return
         settings.edit { putString("selectedInferenceEngine", selected.name) }
         _state.update {
             it.copy(
@@ -144,13 +158,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun requestModelSetup() {
+        if (!_state.value.engineReady) {
+            _state.update {
+                it.copy(modelStatus = "无法配置模型：${it.engineDiagnostic}")
+            }
+            return
+        }
         val model = _state.value.selectedModel
         if (downloader.isReady(model)) loadDownloadedModel()
         else _state.update { it.copy(setupPromptPending = true) }
     }
 
     fun downloadAndLoadModel(huggingFaceToken: String? = null) {
-        if (_state.value.downloadingModel) return
+        if (_state.value.downloadingModel || !_state.value.engineReady) return
         val model = _state.value.selectedModel
         _state.update {
             it.copy(downloadingModel = true, modelDownloadCancelable = true, modelReady = false,
@@ -178,6 +198,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ) }
             } catch (error: Throwable) {
                 val reason = error.message ?: error.javaClass.simpleName
+                settings.edit { putString("lastModelDownloadFailure", reason) }
                 _state.update { it.copy(
                     downloadingModel = false,
                     modelDownloadCancelable = false,
@@ -466,6 +487,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         inferenceEngine: InferenceEngine
     ) {
         val result = runtime.load(file, model, inferenceEngine)
+        settings.edit { remove("lastModelDownloadFailure") }
         _state.update { it.copy(
             downloadingModel = false,
             modelDownloadCancelable = false,

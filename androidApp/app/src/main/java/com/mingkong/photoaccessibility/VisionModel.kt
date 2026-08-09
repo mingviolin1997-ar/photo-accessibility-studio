@@ -1,6 +1,7 @@
 package com.mingkong.photoaccessibility
 
 import java.util.Locale
+import java.net.URL
 
 enum class VisionModel(
     val displayName: String,
@@ -65,6 +66,11 @@ enum class VisionModel(
 
     val downloadSize: String
         get() = String.format(Locale.US, "约 %.2f GB", expectedBytes / 1_000_000_000.0)
+
+    val downloadUrl: URL
+        get() = URL(
+            "https://huggingface.co/$repository/resolve/$revision/$fileName?download=true"
+        )
 
     val platformCompatibility: String
         get() = when (this) {

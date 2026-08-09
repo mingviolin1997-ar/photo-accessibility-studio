@@ -40,6 +40,14 @@
             android:text="@string/model_checking" />
 
         <TextView
+            android:id="@+id/engineDiagnosticText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:accessibilityLiveRegion="polite"
+            android:text="@string/engine_checking" />
+
+        <TextView
             android:id="@+id/activeEngineText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

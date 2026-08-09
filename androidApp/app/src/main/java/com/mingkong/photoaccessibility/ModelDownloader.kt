@@ -1,7 +1,6 @@
 package com.mingkong.photoaccessibility
 
 import android.content.Context
-import android.os.storage.StorageManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -16,7 +15,6 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
-import java.net.URL
 import java.security.MessageDigest
 import javax.net.ssl.SSLException
 import kotlin.coroutines.coroutineContext
@@ -33,7 +31,7 @@ data class DownloadProgress(
         get() = if (total <= 0) 0 else ((downloaded * 100) / total).toInt().coerceIn(0, 100)
 }
 
-private class NonRetryableDownloadException(message: String) : IOException(message)
+internal class NonRetryableDownloadException(message: String) : IOException(message)
 
 private class DownloadActivity(initialBytes: Long) {
     @Volatile var downloaded: Long = initialBytes
@@ -70,7 +68,10 @@ internal class DownloadSpeedMeter(
     }
 }
 
-class ModelDownloader(private val context: Context) {
+internal class ModelDownloader(
+    private val context: Context,
+    private val httpClient: HuggingFaceHttpClient = HuggingFaceHttpClient()
+) {
     private val modelsDirectory = File(context.filesDir, "models")
 
     fun modelDirectory(model: VisionModel) = File(modelsDirectory, model.name.lowercase())
@@ -98,9 +99,18 @@ class ModelDownloader(private val context: Context) {
             }
         }
         modelDirectory(model).mkdirs()
-        ensureStorage(model)
         val modelFile = modelFile(model)
         val partFile = partFile(model)
+
+        if (isReady(model)) {
+            onProgress(DownloadProgress(
+                model.expectedBytes,
+                model.expectedBytes,
+                "${model.displayName} 已安装并通过固定版本检查",
+                0
+            ))
+            return@withContext modelFile
+        }
 
         if (modelFile.isFile && modelFile.length() == model.expectedBytes) {
             onProgress(DownloadProgress(
@@ -130,6 +140,31 @@ class ModelDownloader(private val context: Context) {
             return@withContext markComplete(model)
         }
 
+        onProgress(DownloadProgress(
+            downloaded = partFile.length(),
+            total = model.expectedBytes,
+            currentStep = "正在检测 ${model.displayName} 下载服务器",
+            bytesPerSecond = 0,
+            detail = "只请求一个字节，核对权限、重定向和断点支持"
+        ))
+        val probe = probeRemote(model, huggingFaceToken, partFile.length(), onProgress)
+        if (probe.remoteTotalBytes != null && probe.remoteTotalBytes != model.expectedBytes) {
+            throw NonRetryableDownloadException(
+                "服务器文件大小为 ${DownloadText.bytes(probe.remoteTotalBytes)}，但应用固定版本应为 " +
+                    "${DownloadText.bytes(model.expectedBytes)}；已停止下载，请更新应用中的模型清单"
+            )
+        }
+        onProgress(DownloadProgress(
+            downloaded = partFile.length(),
+            total = model.expectedBytes,
+            currentStep = "模型服务器连接正常",
+            bytesPerSecond = 0,
+            detail = "HTTP ${probe.responseCode}，${probe.redirectCount} 次安全重定向，" +
+                (if (probe.supportsRange) "支持断点续传" else "服务器未确认断点支持") +
+                (probe.remoteTotalBytes?.let { "；远端大小 ${DownloadText.bytes(it)} 已匹配" } ?: "")
+        ))
+        ensureStorage(model)
+
         downloadFile(model, huggingFaceToken, onProgress)
         require(partFile.length() == model.expectedBytes) { "模型下载长度不一致" }
         onProgress(DownloadProgress(
@@ -152,6 +187,36 @@ class ModelDownloader(private val context: Context) {
         }
     }
 
+    private suspend fun probeRemote(
+        model: VisionModel,
+        huggingFaceToken: String?,
+        downloaded: Long,
+        onProgress: (DownloadProgress) -> Unit
+    ): RemoteProbe {
+        var lastError: Throwable? = null
+        for (attempt in 1..3) {
+            try {
+                return httpClient.probe(model.downloadUrl, huggingFaceToken)
+            } catch (error: NonRetryableDownloadException) {
+                throw error
+            } catch (error: Throwable) {
+                lastError = error
+                if (attempt < 3) {
+                    onProgress(DownloadProgress(
+                        downloaded = downloaded,
+                        total = model.expectedBytes,
+                        currentStep = "模型服务器探测失败，准备重试",
+                        bytesPerSecond = 0,
+                        detail = "${friendlyFailure(error)}；${attempt * 2} 秒后第 ${attempt + 1} 次探测",
+                        attempt = attempt
+                    ))
+                    delay(attempt * 2_000L)
+                }
+            }
+        }
+        throw IOException("${friendlyFailure(lastError)}；模型服务器探测已尝试 3 次")
+    }
+
     fun delete(model: VisionModel): Boolean {
         val directory = modelDirectory(model)
         if (!directory.exists()) return true
@@ -163,10 +228,11 @@ class ModelDownloader(private val context: Context) {
             modelFile(model).length() == model.expectedBytes -> 0
             else -> (model.expectedBytes - partFile(model).length()).coerceAtLeast(0)
         }
-        val storage = context.getSystemService(StorageManager::class.java)
-        val allocatable = storage.getAllocatableBytes(storage.getUuidForPath(modelDirectory(model)))
-        require(allocatable > missing + 768L * 1024 * 1024) {
-            "存储空间不足；${model.displayName} ${model.downloadSize}，另需至少 768MB 校验和缓存空间"
+        val reserve = 256L * 1024 * 1024
+        val available = modelDirectory(model).usableSpace.coerceAtLeast(0)
+        require(available >= missing + reserve) {
+            "存储空间不足：还需下载 ${DownloadText.bytes(missing)}，并保留 256 MB 运行空间；" +
+                "当前可用 ${DownloadText.bytes(available)}。可选择更小的模型或释放空间后重试"
         }
     }
 
@@ -237,19 +303,10 @@ class ModelDownloader(private val context: Context) {
         onProgress: (DownloadProgress) -> Unit
     ) {
         var offset = target.length().coerceAtMost(model.expectedBytes)
-        val url = "https://huggingface.co/${model.repository}/resolve/${model.revision}/${model.fileName}?download=true"
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.instanceFollowRedirects = true
-        connection.connectTimeout = 20_000
-        connection.readTimeout = 30_000
-        connection.setRequestProperty("Accept-Encoding", "identity")
-        if (!huggingFaceToken.isNullOrBlank()) {
-            connection.setRequestProperty("Authorization", "Bearer ${huggingFaceToken.trim()}")
-        }
-        if (offset > 0) connection.setRequestProperty("Range", "bytes=$offset-")
+        val opened = httpClient.openDownload(model.downloadUrl, huggingFaceToken, offset)
+        val connection = opened.connection
         try {
-            connection.connect()
-            val responseCode = connection.responseCode
+            val responseCode = opened.responseCode
             if (offset > 0 && responseCode == HttpURLConnection.HTTP_OK) {
                 if (!target.delete()) {
                     throw NonRetryableDownloadException("服务器不支持断点续传，且无法清理旧的临时文件")
@@ -269,6 +326,17 @@ class ModelDownloader(private val context: Context) {
             ) {
                 throw IOException("模型服务器返回 HTTP $responseCode")
             }
+            if (responseCode == HttpURLConnection.HTTP_PARTIAL) {
+                validateContentRange(connection, offset, model.expectedBytes)
+            } else if (offset == 0L) {
+                val contentLength = connection.contentLengthLong
+                if (contentLength >= 0 && contentLength != model.expectedBytes) {
+                    throw NonRetryableDownloadException(
+                        "服务器文件长度为 ${DownloadText.bytes(contentLength)}，预期为 " +
+                            DownloadText.bytes(model.expectedBytes)
+                    )
+                }
+            }
 
             val speed = DownloadSpeedMeter().also { it.reset(offset) }
             var lastReportedAt = 0L
@@ -277,7 +345,7 @@ class ModelDownloader(private val context: Context) {
                 model.expectedBytes,
                 if (offset > 0) "正在断点续传 ${model.displayName}" else "正在下载 ${model.displayName}",
                 0,
-                "第 $attempt 次连接已建立",
+                "第 $attempt 次连接已建立；经过 ${opened.redirectCount} 次安全重定向到 ${opened.finalHost}",
                 attempt
             ))
             FileOutputStream(target, offset > 0).use { output ->
@@ -290,6 +358,11 @@ class ModelDownloader(private val context: Context) {
                         if (count < 0) break
                         output.write(buffer, 0, count)
                         written += count
+                        if (written > model.expectedBytes) {
+                            throw NonRetryableDownloadException(
+                                "服务器返回的数据超过固定模型长度，已停止以避免保存损坏文件"
+                            )
+                        }
                         activity.update(written)
                         val now = System.currentTimeMillis()
                         if (now - lastReportedAt >= 250 || written >= model.expectedBytes) {
@@ -320,6 +393,26 @@ class ModelDownloader(private val context: Context) {
         is IOException -> error.message ?: "网络读写失败"
         null -> "未知下载错误"
         else -> error.message ?: error.javaClass.simpleName
+    }
+
+    private fun validateContentRange(
+        connection: HttpURLConnection,
+        expectedStart: Long,
+        expectedTotal: Long
+    ) {
+        val header = connection.getHeaderField("Content-Range")
+            ?: throw IOException("服务器返回断点数据，但缺少 Content-Range")
+        val match = CONTENT_RANGE.matchEntire(header.trim())
+            ?: throw IOException("服务器返回无法识别的 Content-Range：$header")
+        val actualStart = match.groupValues[1].toLongOrNull()
+        val actualTotal = match.groupValues[3].toLongOrNull()
+        if (actualStart != expectedStart || actualTotal != expectedTotal) {
+            throw NonRetryableDownloadException(
+                "断点响应不匹配：服务器从 ${actualStart ?: "未知"} 字节开始、总长 " +
+                    "${actualTotal?.let(DownloadText::bytes) ?: "未知"}；预期从 $expectedStart 字节开始、" +
+                    "总长 ${DownloadText.bytes(expectedTotal)}"
+            )
+        }
     }
 
     private suspend fun verify(
@@ -371,4 +464,8 @@ class ModelDownloader(private val context: Context) {
     }
 
     private fun File.readTextOrEmpty(): String = runCatching { readText() }.getOrDefault("")
+
+    companion object {
+        private val CONTENT_RANGE = Regex("bytes\\s+(\\d+)-(\\d+)/(\\d+)", RegexOption.IGNORE_CASE)
+    }
 }
