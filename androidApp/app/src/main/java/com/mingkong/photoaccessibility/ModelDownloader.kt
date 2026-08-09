@@ -48,68 +48,133 @@ internal class DownloadSpeedMeter(
 }
 
 class ModelDownloader(private val context: Context) {
-    companion object {
-        const val repository = "trevon/Qwen3.5-4B-LiteRT"
-        const val revision = "8c81b3a5932f8544fd927c9f095f24baf4ca755a"
-        const val expectedBytes = 5_263_458_304L
-        const val expectedSha256 = "09c025bd69d3ef048cd79dc15c8fd5e4602a5b0ddb2555d33a38cd40ed5d5205"
-        private const val fileName = "model_multimodal.litertlm"
-    }
+    private val modelsDirectory = File(context.filesDir, "models")
 
-    val modelDirectory = File(context.filesDir, "models/Qwen3.5-4B-LiteRT")
-    val modelFile = File(modelDirectory, fileName)
-    private val partFile = File(modelDirectory, "$fileName.part")
-    private val completedFile = File(modelDirectory, ".download-complete")
+    fun modelDirectory(model: VisionModel) = File(modelsDirectory, model.name.lowercase())
+    fun modelFile(model: VisionModel) = File(modelDirectory(model), model.fileName)
+    private fun partFile(model: VisionModel) = File(modelDirectory(model), "${model.fileName}.part")
+    private fun completedFile(model: VisionModel) = File(modelDirectory(model), ".download-complete")
 
-    fun isReady(): Boolean = modelFile.isFile && modelFile.length() == expectedBytes &&
-        completedFile.readTextOrEmpty().contains(expectedSha256)
+    fun isReady(model: VisionModel): Boolean =
+        modelFile(model).isFile &&
+            modelFile(model).length() == model.expectedBytes &&
+            completedFile(model).readTextOrEmpty().lineSequence().any {
+                it.equals(model.expectedSha256, ignoreCase = true)
+            }
 
-    suspend fun download(onProgress: (DownloadProgress) -> Unit): File = withContext(Dispatchers.IO) {
-        modelDirectory.mkdirs()
-        val storage = context.getSystemService(StorageManager::class.java)
-        val allocatable = storage.getAllocatableBytes(storage.getUuidForPath(modelDirectory))
-        require(allocatable > missingBytes() + 768L * 1024 * 1024) {
-            "存储空间不足；模型约需 5.26GB，另需至少 768MB 校验和缓存空间"
+    fun installedModels(): Set<VisionModel> = VisionModel.entries.filterTo(mutableSetOf(), ::isReady)
+
+    suspend fun download(
+        model: VisionModel,
+        huggingFaceToken: String? = null,
+        onProgress: (DownloadProgress) -> Unit
+    ): File = withContext(Dispatchers.IO) {
+        if (model.requiresHuggingFaceToken) {
+            require(!huggingFaceToken.isNullOrBlank()) {
+                "此模型需要 Hugging Face 读取令牌；请先在模型页面接受 Gemma 许可"
+            }
         }
+        modelDirectory(model).mkdirs()
+        ensureStorage(model)
+        val modelFile = modelFile(model)
+        val partFile = partFile(model)
 
-        if (modelFile.isFile && modelFile.length() == expectedBytes) {
-            onProgress(DownloadProgress(expectedBytes, expectedBytes, "正在校验已有模型", 0))
-            if (verify(modelFile)) return@withContext markComplete()
+        if (modelFile.isFile && modelFile.length() == model.expectedBytes) {
+            onProgress(DownloadProgress(
+                model.expectedBytes,
+                model.expectedBytes,
+                "正在校验已有 ${model.displayName}",
+                0
+            ))
+            if (verify(modelFile, model.expectedSha256)) return@withContext markComplete(model)
             require(modelFile.delete()) { "已有模型校验失败且无法删除" }
         }
 
-        if (partFile.length() > expectedBytes) require(partFile.delete()) { "无法清理无效下载文件" }
-        if (partFile.length() == expectedBytes) {
-            onProgress(DownloadProgress(expectedBytes, expectedBytes, "正在校验已下载模型", 0))
-            require(verify(partFile)) { "Qwen3.5 4B 模型 SHA-256 校验失败" }
-            finishPart()
-            return@withContext markComplete()
+        if (partFile.length() > model.expectedBytes) {
+            require(partFile.delete()) { "无法清理无效下载文件" }
+        }
+        if (partFile.length() == model.expectedBytes) {
+            onProgress(DownloadProgress(
+                model.expectedBytes,
+                model.expectedBytes,
+                "正在校验已下载的 ${model.displayName}",
+                0
+            ))
+            require(verify(partFile, model.expectedSha256)) {
+                "${model.displayName} SHA-256 校验失败"
+            }
+            finishPart(model)
+            return@withContext markComplete(model)
         }
 
-        downloadFile(onProgress)
-        require(partFile.length() == expectedBytes) { "模型下载长度不一致" }
-        onProgress(DownloadProgress(expectedBytes, expectedBytes, "下载完成，正在校验 SHA-256", 0))
-        require(verify(partFile)) { "Qwen3.5 4B 模型 SHA-256 校验失败" }
-        finishPart()
-        markComplete().also {
-            onProgress(DownloadProgress(expectedBytes, expectedBytes, "模型下载、安装与校验完成", 0))
+        downloadFile(model, huggingFaceToken, onProgress)
+        require(partFile.length() == model.expectedBytes) { "模型下载长度不一致" }
+        onProgress(DownloadProgress(
+            model.expectedBytes,
+            model.expectedBytes,
+            "下载完成，正在校验 ${model.displayName} 的 SHA-256",
+            0
+        ))
+        require(verify(partFile, model.expectedSha256)) {
+            "${model.displayName} SHA-256 校验失败"
+        }
+        finishPart(model)
+        markComplete(model).also {
+            onProgress(DownloadProgress(
+                model.expectedBytes,
+                model.expectedBytes,
+                "${model.displayName} 下载、安装与校验完成",
+                0
+            ))
         }
     }
 
-    private suspend fun downloadFile(onProgress: (DownloadProgress) -> Unit) {
-        var offset = partFile.length().coerceAtMost(expectedBytes)
-        val url = "https://huggingface.co/$repository/resolve/$revision/$fileName?download=true"
+    fun delete(model: VisionModel): Boolean {
+        val directory = modelDirectory(model)
+        if (!directory.exists()) return true
+        return directory.deleteRecursively()
+    }
+
+    private fun ensureStorage(model: VisionModel) {
+        val missing = when {
+            modelFile(model).length() == model.expectedBytes -> 0
+            else -> (model.expectedBytes - partFile(model).length()).coerceAtLeast(0)
+        }
+        val storage = context.getSystemService(StorageManager::class.java)
+        val allocatable = storage.getAllocatableBytes(storage.getUuidForPath(modelDirectory(model)))
+        require(allocatable > missing + 768L * 1024 * 1024) {
+            "存储空间不足；${model.displayName} ${model.downloadSize}，另需至少 768MB 校验和缓存空间"
+        }
+    }
+
+    private suspend fun downloadFile(
+        model: VisionModel,
+        huggingFaceToken: String?,
+        onProgress: (DownloadProgress) -> Unit
+    ) {
+        val target = partFile(model)
+        var offset = target.length().coerceAtMost(model.expectedBytes)
+        val url = "https://huggingface.co/${model.repository}/resolve/${model.revision}/${model.fileName}?download=true"
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.instanceFollowRedirects = true
         connection.connectTimeout = 30_000
         connection.readTimeout = 120_000
         connection.setRequestProperty("Accept-Encoding", "identity")
+        if (!huggingFaceToken.isNullOrBlank()) {
+            connection.setRequestProperty("Authorization", "Bearer ${huggingFaceToken.trim()}")
+        }
         if (offset > 0) connection.setRequestProperty("Range", "bytes=$offset-")
         connection.connect()
 
         if (offset > 0 && connection.responseCode == HttpURLConnection.HTTP_OK) {
-            require(partFile.delete()) { "服务器不支持断点续传，且无法重新开始下载" }
+            require(target.delete()) { "服务器不支持断点续传，且无法重新开始下载" }
             offset = 0
+        }
+        if (connection.responseCode == HttpURLConnection.HTTP_UNAUTHORIZED ||
+            connection.responseCode == HttpURLConnection.HTTP_FORBIDDEN
+        ) {
+            connection.disconnect()
+            error("模型仓库拒绝访问；请确认已接受 Gemma 许可，且 Hugging Face 令牌具有读取权限")
         }
         require(connection.responseCode == HttpURLConnection.HTTP_OK ||
             connection.responseCode == HttpURLConnection.HTTP_PARTIAL) {
@@ -118,9 +183,14 @@ class ModelDownloader(private val context: Context) {
 
         val speed = DownloadSpeedMeter().also { it.reset(offset) }
         var lastReportedSpeed = -1L
-        onProgress(DownloadProgress(offset, expectedBytes, "正在下载 Qwen3.5 4B 多模态模型", 0))
+        onProgress(DownloadProgress(
+            offset,
+            model.expectedBytes,
+            "正在下载 ${model.displayName}",
+            0
+        ))
         try {
-            FileOutputStream(partFile, offset > 0).use { output ->
+            FileOutputStream(target, offset > 0).use { output ->
                 connection.inputStream.use { input ->
                     val buffer = ByteArray(256 * 1024)
                     var written = offset
@@ -131,11 +201,11 @@ class ModelDownloader(private val context: Context) {
                         output.write(buffer, 0, count)
                         written += count
                         val currentSpeed = speed.update(written)
-                        if (currentSpeed != lastReportedSpeed || written >= expectedBytes) {
+                        if (currentSpeed != lastReportedSpeed || written >= model.expectedBytes) {
                             onProgress(DownloadProgress(
                                 written,
-                                expectedBytes,
-                                "正在下载 Qwen3.5 4B 多模态模型",
+                                model.expectedBytes,
+                                "正在下载 ${model.displayName}",
                                 currentSpeed
                             ))
                             lastReportedSpeed = currentSpeed
@@ -149,7 +219,7 @@ class ModelDownloader(private val context: Context) {
         }
     }
 
-    private fun verify(file: File): Boolean {
+    private fun verify(file: File, expectedSha256: String): Boolean {
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().buffered().use { input ->
             val buffer = ByteArray(1024 * 1024)
@@ -159,22 +229,22 @@ class ModelDownloader(private val context: Context) {
                 digest.update(buffer, 0, count)
             }
         }
-        return digest.digest().joinToString("") { "%02x".format(it) }.equals(expectedSha256, true)
+        return digest.digest().joinToString("") { "%02x".format(it) }
+            .equals(expectedSha256, ignoreCase = true)
     }
 
-    private fun finishPart() {
+    private fun finishPart(model: VisionModel) {
+        val modelFile = modelFile(model)
+        val partFile = partFile(model)
         if (modelFile.exists()) require(modelFile.delete()) { "无法替换旧模型" }
         require(partFile.renameTo(modelFile)) { "无法完成模型的原子安装" }
     }
 
-    private fun markComplete(): File {
-        completedFile.writeText("$repository\n$revision\n$expectedBytes\n$expectedSha256\n")
-        return modelFile
-    }
-
-    private fun missingBytes(): Long = when {
-        modelFile.length() == expectedBytes -> 0
-        else -> (expectedBytes - partFile.length()).coerceAtLeast(0)
+    private fun markComplete(model: VisionModel): File {
+        completedFile(model).writeText(
+            "${model.repository}\n${model.revision}\n${model.expectedBytes}\n${model.expectedSha256}\n"
+        )
+        return modelFile(model)
     }
 
     private fun File.readTextOrEmpty(): String = runCatching { readText() }.getOrDefault("")

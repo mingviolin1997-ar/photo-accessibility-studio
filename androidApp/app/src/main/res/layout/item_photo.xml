@@ -23,6 +23,27 @@
             android:layout_marginTop="4dp"
             android:accessibilityLiveRegion="polite" />
 
+        <TextView
+            android:id="@+id/photoDetails"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp" />
+
+        <TextView
+            android:id="@+id/descriptionText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textIsSelectable="true" />
+
+        <Button
+            android:id="@+id/editDescriptionButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minHeight="56dp"
+            android:text="@string/edit_description" />
+
         <EditText
             android:id="@+id/descriptionEditor"
             android:layout_width="match_parent"
@@ -33,7 +54,8 @@
             android:importantForAutofill="no"
             android:inputType="textMultiLine|textCapSentences"
             android:minHeight="112dp"
-            android:minLines="4" />
+            android:minLines="4"
+            android:visibility="gone" />
 
         <Button
             android:id="@+id/writeOneButton"

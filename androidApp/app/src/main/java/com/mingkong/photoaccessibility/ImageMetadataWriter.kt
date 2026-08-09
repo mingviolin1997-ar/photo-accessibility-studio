@@ -24,7 +24,7 @@ class ImageMetadataWriter(private val resolver: ContentResolver) {
         val existing = RawXmpContainer.read(original)
         val packet = XmpPacketBuilder.build(existing, normalized)
         val modified = RawXmpContainer.write(original, packet)
-        verifyBytes(modified, normalized, before)
+        verifyPacket(modified, normalized)
 
         var sourceChanged = false
         try {
@@ -46,12 +46,16 @@ class ImageMetadataWriter(private val resolver: ContentResolver) {
     }
 
     private fun verifyBytes(data: ByteArray, expected: String, before: ImageIntegrity): ImageIntegrity {
-        val raw = RawXmpContainer.read(data) ?: error("写入后缺少原始 XMP packet")
-        XmpPacketBuilder.validate(raw, expected)
-        require(XmpPacketBuilder.extract(raw) == expected) { "描述字段回读不一致" }
+        verifyPacket(data, expected)
         val after = ImageIntegrityChecker.snapshot(data)
         require(after == before) { "照片尺寸或解码像素发生变化" }
         return after
+    }
+
+    private fun verifyPacket(data: ByteArray, expected: String) {
+        val raw = RawXmpContainer.read(data) ?: error("写入后缺少原始 XMP packet")
+        XmpPacketBuilder.validate(raw, expected)
+        require(XmpPacketBuilder.extract(raw) == expected) { "描述字段回读不一致" }
     }
 
     private fun readBytes(uri: Uri): ByteArray = resolver.openInputStream(uri)?.use { it.readBytes() }

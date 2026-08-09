@@ -11,8 +11,8 @@ android {
         applicationId = "com.mingkong.photoaccessibility"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4.0-test"
+        versionCode = 6
+        versionName = "0.6.0-test"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
@@ -46,6 +46,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.0")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
+    implementation("androidx.exifinterface:exifinterface:1.4.1")
+    implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.google.android.material:material:1.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.15.0")

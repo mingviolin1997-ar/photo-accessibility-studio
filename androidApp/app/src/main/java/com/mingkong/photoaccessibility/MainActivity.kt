@@ -2,9 +2,11 @@ package com.mingkong.photoaccessibility
 
 import android.content.Intent
 import android.os.Bundle
+import android.text.InputType
 import android.view.KeyEvent
 import android.view.View
 import android.widget.Button
+import android.widget.EditText
 import android.widget.ProgressBar
 import android.widget.RadioGroup
 import android.widget.TextView
@@ -19,6 +21,9 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.materialswitch.MaterialSwitch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -26,16 +31,34 @@ class MainActivity : AppCompatActivity() {
     private lateinit var adapter: PhotoAdapter
     private lateinit var historyAdapter: HistoryAdapter
     private var setupDialogShowing = false
+    private var engineDialogShowing = false
+    private var modelDialogShowing = false
     private var historyExpanded = false
     private var focusedJobId: String? = null
     private var lastStatus = ""
     private var lastModelAnnouncement = ""
     private var lastDownloadBucket = -1
+    private val progressSoundPlayer = ProgressSoundPlayer()
+    private var soundJob: Job? = null
+    private var halfwaySoundPlayed = false
+    private var wasBusy = false
 
     private val photoPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         uris.forEach { uri -> runCatching { contentResolver.takePersistableUriPermission(uri, flags) } }
         viewModel.addPhotos(uris)
+    }
+
+    private val exportFolderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+            viewModel.exportAll(uri)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -77,12 +100,20 @@ class MainActivity : AppCompatActivity() {
             R.id.batchHeading, R.id.queueHeading, R.id.historyToggleButton).forEach { id ->
             ViewCompat.setAccessibilityHeading(findViewById(id), true)
         }
+        findViewById<Button>(R.id.chooseEngineButton).setOnClickListener {
+            viewModel.requestEngineChoice()
+        }
+        findViewById<Button>(R.id.chooseModelButton).setOnClickListener {
+            viewModel.requestModelChoice()
+        }
         findViewById<Button>(R.id.checkModelButton).setOnClickListener { viewModel.requestModelSetup() }
+        findViewById<Button>(R.id.deleteModelButton).setOnClickListener { showDeleteModelDialog() }
         findViewById<Button>(R.id.addPhotosButton).setOnClickListener { photoPicker.launch(arrayOf("image/*")) }
         findViewById<Button>(R.id.selectAllButton).setOnClickListener { viewModel.selectAll(true) }
         findViewById<Button>(R.id.deselectAllButton).setOnClickListener { viewModel.selectAll(false) }
         findViewById<Button>(R.id.recognizeButton).setOnClickListener { viewModel.startRecognition() }
         findViewById<Button>(R.id.writeSelectedButton).setOnClickListener { viewModel.writeSelected() }
+        findViewById<Button>(R.id.exportAllButton).setOnClickListener { exportFolderPicker.launch(null) }
         findViewById<Button>(R.id.clearCurrentButton).setOnClickListener {
             focusedJobId = null
             viewModel.clearCurrent()
@@ -129,6 +160,19 @@ class MainActivity : AppCompatActivity() {
             modelStatus.announceForAccessibility(state.modelStatus)
             lastModelAnnouncement = state.modelStatus
         }
+        findViewById<TextView>(R.id.activeEngineText).text =
+            getString(R.string.active_engine_format, state.activeEngineLabel)
+        findViewById<Button>(R.id.chooseEngineButton).apply {
+            text = "推理引擎：${state.selectedEngine.displayName}"
+            contentDescription = "$text。点击切换；${state.selectedEngine.description}"
+            isEnabled = !state.busy && !state.downloadingModel
+        }
+        findViewById<Button>(R.id.chooseModelButton).apply {
+            val installed = if (state.selectedModel in state.installedModels) "，已安装" else "，未安装"
+            text = "视觉模型：${state.selectedModel.displayName}$installed"
+            contentDescription = "$text。点击查看模型说明并切换"
+            isEnabled = !state.busy && !state.downloadingModel
+        }
 
         val modelProgress = findViewById<ProgressBar>(R.id.modelProgressBar)
         val modelProgressText = findViewById<TextView>(R.id.modelProgressText)
@@ -145,12 +189,23 @@ class MainActivity : AppCompatActivity() {
         }
 
         findViewById<ProgressBar>(R.id.progressBar).progress = state.progress
+        updateProgressSounds(state)
         findViewById<Button>(R.id.recognizeButton).isEnabled =
             state.modelReady && !state.busy && !state.downloadingModel &&
                 state.jobs.any { it.status == JobStatus.WAITING || it.status == JobStatus.FAILED }
         findViewById<Button>(R.id.writeSelectedButton).isEnabled = !state.busy &&
             state.jobs.any { it.selectedForWriting && it.description.isNotBlank() }
-        findViewById<Button>(R.id.checkModelButton).isEnabled = !state.downloadingModel
+        findViewById<Button>(R.id.exportAllButton).isEnabled = !state.busy &&
+            state.jobs.any { it.description.isNotBlank() }
+        findViewById<Button>(R.id.checkModelButton).apply {
+            text = "下载或检查当前模型（${state.selectedModel.downloadSize}）"
+            isEnabled = !state.downloadingModel && !state.busy
+        }
+        findViewById<Button>(R.id.deleteModelButton).apply {
+            text = "移除 ${state.selectedModel.displayName} 以释放空间"
+            isEnabled = state.selectedModel in state.installedModels &&
+                !state.downloadingModel && !state.busy
+        }
         findViewById<Button>(R.id.clearCurrentButton).isEnabled =
             state.jobs.isNotEmpty() && !state.busy
         val historyCount = state.history.sumOf { it.jobs.size }
@@ -175,7 +230,45 @@ class MainActivity : AppCompatActivity() {
         findViewById<MaterialSwitch>(R.id.autoWriteSwitch).apply {
             if (isChecked != state.autoWrite) isChecked = state.autoWrite
         }
-        if (state.setupPromptPending && !setupDialogShowing) showSetupDialog()
+        when {
+            state.engineChoicePending && !engineDialogShowing -> showEngineDialog()
+            state.modelChoicePending && !modelDialogShowing -> showModelDialog()
+            state.setupPromptPending && !setupDialogShowing &&
+                !engineDialogShowing && !modelDialogShowing -> showSetupDialog()
+        }
+    }
+
+    private fun updateProgressSounds(state: MainUiState) {
+        if (state.busy && !state.downloadingModel && soundJob == null) {
+            halfwaySoundPlayed = state.progress >= 50
+            soundJob = lifecycleScope.launch {
+                while (isActive && viewModel.state.value.busy &&
+                    !viewModel.state.value.downloadingModel
+                ) {
+                    val progress = viewModel.state.value.progress
+                    if (!halfwaySoundPlayed && progress >= 50) {
+                        progressSoundPlayer.playHalfway()
+                        halfwaySoundPlayed = true
+                    } else {
+                        progressSoundPlayer.playProgress(progress)
+                    }
+                    delay(1_000)
+                }
+            }
+        } else if (!state.busy && soundJob != null) {
+            soundJob?.cancel()
+            soundJob = null
+        }
+        if (wasBusy && !state.busy && state.progress >= 100) {
+            progressSoundPlayer.playComplete()
+        }
+        wasBusy = state.busy
+    }
+
+    override fun onDestroy() {
+        soundJob?.cancel()
+        progressSoundPlayer.close()
+        super.onDestroy()
     }
 
     private fun showHistoryRetentionDialog() {
@@ -210,16 +303,83 @@ class MainActivity : AppCompatActivity() {
     private fun showSetupDialog() {
         setupDialogShowing = true
         viewModel.setupPromptDisplayed()
+        val model = viewModel.state.value.selectedModel
+        val tokenInput = if (model.requiresHuggingFaceToken) {
+            EditText(this).apply {
+                hint = "Hugging Face 读取令牌"
+                contentDescription = "Hugging Face 读取令牌；只用于本次下载，不会保存"
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+                setPadding(48, 20, 48, 20)
+            }
+        } else null
+        val licenseNote = if (model.requiresHuggingFaceToken) {
+            "此 Google 模型仓库受 Gemma 许可保护。请先在 Hugging Face 模型页面接受许可，再在下方输入具有读取权限的令牌；令牌只用于本次下载，不会保存。"
+        } else {
+            "此模型无需账号或密钥。"
+        }
         MaterialAlertDialogBuilder(this)
-            .setTitle("自动下载并配置本地模型？")
+            .setTitle("下载并自动配置 ${model.displayName}？")
             .setMessage(
-                "LiteRT-LM 推理环境已随应用提供，但本机还没有 Qwen3.5 4B 多模态模型。" +
-                    "是否现在从 Hugging Face 下载固定版本？下载约 5.26GB，支持断点续传，" +
-                    "完成后会核对 SHA-256。建议连接 Wi-Fi，并预留至少 6GB 空间。"
+                "LiteRT-LM 已随应用提供。本机还没有 ${model.displayName}，下载量${model.downloadSize}，" +
+                    "支持断点续传，完成后会核对固定版本、文件长度和 SHA-256。" +
+                    "建议使用 Wi-Fi 并额外预留至少 768MB 校验空间。\n\n" +
+                    "${model.recommendation}\n\n$licenseNote"
             )
-            .setPositiveButton("下载并自动配置") { _, _ -> viewModel.downloadAndLoadModel() }
+            .apply { if (tokenInput != null) setView(tokenInput) }
+            .setPositiveButton("下载并自动配置") { _, _ ->
+                viewModel.downloadAndLoadModel(tokenInput?.text?.toString())
+            }
             .setNegativeButton("暂不下载") { _, _ -> viewModel.declineSetup() }
             .setOnDismissListener { setupDialogShowing = false }
+            .show()
+    }
+
+    private fun showEngineDialog() {
+        engineDialogShowing = true
+        viewModel.engineChoiceDisplayed()
+        val engines = InferenceEngine.entries
+        val labels = engines.map { "${it.displayName}。${it.description}" }.toTypedArray()
+        val selected = engines.indexOf(viewModel.state.value.selectedEngine)
+        MaterialAlertDialogBuilder(this)
+            .setTitle("选择 Android 推理引擎")
+            .setSingleChoiceItems(labels, selected) { dialog, which ->
+                viewModel.chooseEngine(engines[which])
+                dialog.dismiss()
+            }
+            .setNegativeButton("取消", null)
+            .setOnDismissListener { engineDialogShowing = false }
+            .show()
+    }
+
+    private fun showModelDialog() {
+        modelDialogShowing = true
+        viewModel.modelChoiceDisplayed()
+        val state = viewModel.state.value
+        val models = VisionModel.entries
+        val labels = models.map { model ->
+            val installed = if (model in state.installedModels) "已安装。" else "未安装。"
+            "$installed ${model.selectionLabel}"
+        }.toTypedArray()
+        val selected = models.indexOf(state.selectedModel)
+        MaterialAlertDialogBuilder(this)
+            .setTitle("选择本地视觉模型")
+            .setSingleChoiceItems(labels, selected) { dialog, which ->
+                viewModel.chooseModel(models[which])
+                dialog.dismiss()
+            }
+            .setNegativeButton("取消", null)
+            .setOnDismissListener { modelDialogShowing = false }
+            .show()
+    }
+
+    private fun showDeleteModelDialog() {
+        val model = viewModel.state.value.selectedModel
+        MaterialAlertDialogBuilder(this)
+            .setTitle("移除 ${model.displayName}？")
+            .setMessage("只删除应用管理的模型文件，不删除照片、描述或历史记录。以后可以重新下载。")
+            .setPositiveButton("移除模型") { _, _ -> viewModel.deleteSelectedModel() }
+            .setNegativeButton("取消", null)
             .show()
     }
 
