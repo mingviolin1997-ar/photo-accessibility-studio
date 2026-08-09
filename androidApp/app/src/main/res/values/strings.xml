@@ -18,6 +18,7 @@
     <string name="deselect_all">全部取消</string>
     <string name="recognize">开始识别</string>
     <string name="write_selected">写入已选照片</string>
+    <string name="clear_current">清空当前工作区（不删除原照片）</string>
     <string name="batch_progress">批处理进度</string>
     <string name="choose_photos">请选择照片开始。</string>
     <string name="queue_count">照片队列：%1$d 张</string>
@@ -25,4 +26,12 @@
     <string name="description_hint">照片的无障碍描述，可在写入前修改</string>
     <string name="write_one">只写入这张照片</string>
     <string name="remove_one">从队列移除（不删除照片）</string>
+    <string name="history_collapsed">历史记录：0 张，已折叠</string>
+    <string name="history_safety">历史只保存软件记录。清除、删除或自动过期都不会删除手机媒体库中的原照片或导出文件。</string>
+    <string name="history_retention">历史默认保留 30 天</string>
+    <string name="clear_history">清空全部历史记录</string>
+    <string name="history_batch">历史批次</string>
+    <string name="history_batch_count">%1$s，%2$d 张</string>
+    <string name="delete_history_item">删除这条历史记录</string>
+    <string name="delete_history_batch">删除此历史批次</string>
 </resources>

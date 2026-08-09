@@ -17,7 +17,8 @@ class PhotoAdapter(
     private val onSelected: (String, Boolean) -> Unit,
     private val onDescription: (String, String) -> Unit,
     private val onWrite: (String) -> Unit,
-    private val onRemove: (String) -> Unit
+    private val onRemove: (String) -> Unit,
+    private val onFocused: (String) -> Unit
 ) : ListAdapter<PhotoJob, PhotoAdapter.JobHolder>(Diff) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): JobHolder {
@@ -36,11 +37,19 @@ class PhotoAdapter(
         private var watcher: TextWatcher? = null
 
         fun bind(job: PhotoJob) {
+            itemView.isFocusable = true
+            itemView.setOnFocusChangeListener { _, focused ->
+                if (focused) onFocused(job.id)
+            }
+            itemView.setOnClickListener { onFocused(job.id) }
             selected.setOnCheckedChangeListener(null)
             selected.text = job.displayName
             selected.isChecked = job.selectedForWriting
             selected.contentDescription = "是否写入照片 ${job.displayName}"
-            selected.setOnCheckedChangeListener { _, value -> onSelected(job.id, value) }
+            selected.setOnCheckedChangeListener { _, value ->
+                onFocused(job.id)
+                onSelected(job.id, value)
+            }
 
             status.text = buildString {
                 append(job.status.label)
@@ -51,6 +60,9 @@ class PhotoAdapter(
             watcher?.let(editor::removeTextChangedListener)
             if (editor.text.toString() != job.description) editor.setText(job.description)
             editor.hint = "${job.displayName} 的无障碍描述，可在写入前修改"
+            editor.setOnFocusChangeListener { _, focused ->
+                if (focused) onFocused(job.id)
+            }
             watcher = object : TextWatcher {
                 override fun beforeTextChanged(value: CharSequence?, start: Int, count: Int, after: Int) = Unit
                 override fun onTextChanged(value: CharSequence?, start: Int, before: Int, count: Int) {
@@ -61,9 +73,17 @@ class PhotoAdapter(
 
             write.isEnabled = job.description.isNotBlank() && job.status != JobStatus.WRITING
             write.contentDescription = "只把描述写入 ${job.displayName} 并自动验证"
-            write.setOnClickListener { onWrite(job.id) }
+            write.setOnClickListener {
+                onFocused(job.id)
+                onWrite(job.id)
+            }
             remove.contentDescription = "从队列移除 ${job.displayName}，不删除原照片"
-            remove.setOnClickListener { onRemove(job.id) }
+            remove.isEnabled =
+                job.status != JobStatus.RECOGNIZING && job.status != JobStatus.WRITING
+            remove.setOnClickListener {
+                onFocused(job.id)
+                onRemove(job.id)
+            }
         }
     }
 

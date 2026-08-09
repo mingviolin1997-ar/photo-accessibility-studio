@@ -2,6 +2,7 @@ package com.mingkong.photoaccessibility
 
 data class MainUiState(
     val jobs: List<PhotoJob> = emptyList(),
+    val history: List<HistoryBatch> = emptyList(),
     val status: String = "请选择照片开始。",
     val modelStatus: String = "正在检查本地模型。",
     val progress: Int = 0,
@@ -13,5 +14,6 @@ data class MainUiState(
     val modelReady: Boolean = false,
     val style: DescriptionStyle = DescriptionStyle.MEDIUM,
     val includeAdvice: Boolean = false,
-    val autoWrite: Boolean = true
+    val autoWrite: Boolean = true,
+    val historyRetentionDays: Int = 30
 )

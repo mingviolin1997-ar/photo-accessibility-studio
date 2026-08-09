@@ -2,6 +2,7 @@ package com.mingkong.photoaccessibility
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.View
 import android.widget.Button
 import android.widget.ProgressBar
@@ -23,7 +24,10 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
     private val viewModel: MainViewModel by viewModels()
     private lateinit var adapter: PhotoAdapter
+    private lateinit var historyAdapter: HistoryAdapter
     private var setupDialogShowing = false
+    private var historyExpanded = false
+    private var focusedJobId: String? = null
     private var lastStatus = ""
     private var lastModelAnnouncement = ""
     private var lastDownloadBucket = -1
@@ -51,17 +55,26 @@ class MainActivity : AppCompatActivity() {
             onSelected = viewModel::setSelected,
             onDescription = viewModel::setDescription,
             onWrite = viewModel::writeOne,
-            onRemove = viewModel::remove
+            onRemove = viewModel::remove,
+            onFocused = { focusedJobId = it }
         )
         findViewById<RecyclerView>(R.id.photoList).apply {
             layoutManager = LinearLayoutManager(this@MainActivity)
             adapter = this@MainActivity.adapter
         }
+        historyAdapter = HistoryAdapter(
+            onDeleteBatch = viewModel::deleteHistoryBatch,
+            onDeleteItem = viewModel::deleteHistoryItem
+        )
+        findViewById<RecyclerView>(R.id.historyList).apply {
+            layoutManager = LinearLayoutManager(this@MainActivity)
+            adapter = historyAdapter
+        }
     }
 
     private fun configureControls() {
         listOf(R.id.appHeading, R.id.modelHeading, R.id.styleHeading,
-            R.id.batchHeading, R.id.queueHeading).forEach { id ->
+            R.id.batchHeading, R.id.queueHeading, R.id.historyToggleButton).forEach { id ->
             ViewCompat.setAccessibilityHeading(findViewById(id), true)
         }
         findViewById<Button>(R.id.checkModelButton).setOnClickListener { viewModel.requestModelSetup() }
@@ -70,6 +83,20 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.deselectAllButton).setOnClickListener { viewModel.selectAll(false) }
         findViewById<Button>(R.id.recognizeButton).setOnClickListener { viewModel.startRecognition() }
         findViewById<Button>(R.id.writeSelectedButton).setOnClickListener { viewModel.writeSelected() }
+        findViewById<Button>(R.id.clearCurrentButton).setOnClickListener {
+            focusedJobId = null
+            viewModel.clearCurrent()
+        }
+        findViewById<Button>(R.id.historyToggleButton).setOnClickListener {
+            historyExpanded = !historyExpanded
+            render(viewModel.state.value)
+        }
+        findViewById<Button>(R.id.clearHistoryButton).setOnClickListener {
+            viewModel.clearHistory()
+        }
+        findViewById<Button>(R.id.historyRetentionButton).setOnClickListener {
+            showHistoryRetentionDialog()
+        }
         findViewById<RadioGroup>(R.id.styleGroup).setOnCheckedChangeListener { _, id ->
             styleFor(id)?.let(viewModel::setStyle)
         }
@@ -83,6 +110,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun render(state: MainUiState) {
         adapter.submitList(state.jobs)
+        historyAdapter.submitList(state.history)
+        if (focusedJobId != null && state.jobs.none { it.id == focusedJobId }) {
+            focusedJobId = null
+        }
         findViewById<TextView>(R.id.queueHeading).text =
             getString(R.string.queue_count, state.jobs.size)
         val statusView = findViewById<TextView>(R.id.statusText)
@@ -120,6 +151,20 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.writeSelectedButton).isEnabled = !state.busy &&
             state.jobs.any { it.selectedForWriting && it.description.isNotBlank() }
         findViewById<Button>(R.id.checkModelButton).isEnabled = !state.downloadingModel
+        findViewById<Button>(R.id.clearCurrentButton).isEnabled =
+            state.jobs.isNotEmpty() && !state.busy
+        val historyCount = state.history.sumOf { it.jobs.size }
+        findViewById<Button>(R.id.historyToggleButton).apply {
+            text = "历史记录：$historyCount 张，${if (historyExpanded) "已展开" else "已折叠"}"
+            contentDescription = text
+        }
+        findViewById<View>(R.id.historyPanel).visibility =
+            if (historyExpanded) View.VISIBLE else View.GONE
+        findViewById<Button>(R.id.clearHistoryButton).isEnabled = state.history.isNotEmpty()
+        findViewById<Button>(R.id.historyRetentionButton).apply {
+            text = "历史默认保留 ${state.historyRetentionDays} 天"
+            contentDescription = "历史记录保留期 ${state.historyRetentionDays} 天，点击可调整"
+        }
 
         val targetRadio = radioFor(state.style)
         val group = findViewById<RadioGroup>(R.id.styleGroup)
@@ -131,6 +176,35 @@ class MainActivity : AppCompatActivity() {
             if (isChecked != state.autoWrite) isChecked = state.autoWrite
         }
         if (state.setupPromptPending && !setupDialogShowing) showSetupDialog()
+    }
+
+    private fun showHistoryRetentionDialog() {
+        val days = intArrayOf(7, 30, 90, 365)
+        val labels = arrayOf("7 天", "30 天", "90 天", "365 天")
+        val current = days.indexOf(viewModel.state.value.historyRetentionDays)
+        MaterialAlertDialogBuilder(this)
+            .setTitle("选择历史保留时间")
+            .setSingleChoiceItems(labels, current) { dialog, which ->
+                viewModel.setHistoryRetentionDays(days[which])
+                dialog.dismiss()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if ((keyCode == KeyEvent.KEYCODE_DEL || keyCode == KeyEvent.KEYCODE_FORWARD_DEL) &&
+            event.isMetaPressed
+        ) {
+            val id = focusedJobId
+                ?: viewModel.state.value.jobs.firstOrNull { it.selectedForWriting }?.id
+            if (id != null) {
+                viewModel.remove(id)
+                focusedJobId = null
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     private fun showSetupDialog() {

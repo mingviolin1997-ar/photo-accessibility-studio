@@ -21,20 +21,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val downloader = ModelDownloader(application)
     private val metadataWriter = ImageMetadataWriter(resolver)
     private val runtime = LiteRtVisionRuntime(resolver, application.cacheDir)
-    private val jobs = queueStore.load()
+    private val historyRetentionDays =
+        settings.getInt("historyRetentionDays", 30).coerceIn(1, 365)
+    private val restoredJobs = queueStore.load()
+    private val history = queueStore.loadHistory(historyRetentionDays).apply {
+        val described = restoredJobs.filter { it.description.isNotBlank() }.map { it.copy() }
+        if (described.isNotEmpty()) add(0, HistoryBatch(jobs = described))
+        val retained = retainHistory(this, historyRetentionDays)
+        clear()
+        addAll(retained)
+    }
+    private val jobs = mutableListOf<PhotoJob>()
 
     private val initialStyle = runCatching {
         DescriptionStyle.valueOf(settings.getString("style", DescriptionStyle.MEDIUM.name)!!)
     }.getOrDefault(DescriptionStyle.MEDIUM)
     private val _state = MutableStateFlow(MainUiState(
         jobs = snapshot(),
+        history = historySnapshot(),
         style = initialStyle,
         includeAdvice = settings.getBoolean("includeAdvice", false),
-        autoWrite = settings.getBoolean("autoWrite", true)
+        autoWrite = settings.getBoolean("autoWrite", true),
+        historyRetentionDays = historyRetentionDays
     ))
     val state: StateFlow<MainUiState> = _state.asStateFlow()
 
     init {
+        queueStore.save(jobs)
+        queueStore.saveHistory(history)
         if (downloader.isReady()) loadDownloadedModel()
         else _state.update {
             it.copy(
@@ -117,8 +131,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setDescription(id: String, value: String) = mutate(id) { it.description = value }
 
     fun remove(id: String) {
+        if (_state.value.busy) return
+        jobs.firstOrNull { it.id == id }?.let { archive(listOf(it)) }
         jobs.removeAll { it.id == id }
-        publish("已从队列移除；原照片未删除。")
+        publish("已从当前工作区移除素材和对应结果；有描述的项目已进入历史，手机媒体库中的原照片未删除。")
+    }
+
+    fun clearCurrent() {
+        if (_state.value.busy || jobs.isEmpty()) return
+        val count = jobs.size
+        archive(jobs)
+        jobs.clear()
+        publish("已清空当前工作区的 $count 项；有描述的项目已进入历史，手机媒体库中的照片未删除。", 0)
+    }
+
+    fun clearHistory() {
+        history.clear()
+        publish("已清空软件历史记录；手机媒体库中的照片和导出文件未删除。")
+    }
+
+    fun deleteHistoryBatch(id: String) {
+        history.removeAll { it.id == id }
+        publish("已删除所选历史批次；手机媒体库中的照片未删除。")
+    }
+
+    fun deleteHistoryItem(batchId: String, jobId: String) {
+        val index = history.indexOfFirst { it.id == batchId }
+        if (index < 0) return
+        val batch = history[index]
+        val remaining = batch.jobs.filterNot { it.id == jobId }
+        if (remaining.isEmpty()) history.removeAt(index)
+        else history[index] = batch.copy(jobs = remaining)
+        publish("已删除所选历史记录；手机媒体库中的照片未删除。")
+    }
+
+    fun setHistoryRetentionDays(days: Int) {
+        val safeDays = days.coerceIn(1, 365)
+        settings.edit { putInt("historyRetentionDays", safeDays) }
+        val retained = retainHistory(history, safeDays)
+        val removed = history.sumOf { it.jobs.size } - retained.sumOf { it.jobs.size }
+        history.clear()
+        history.addAll(retained)
+        publish(if (removed > 0) {
+            "已清理 $removed 条超过 $safeDays 天的软件历史记录；手机媒体库中的照片未删除。"
+        } else {
+            "历史记录保留期已设为 $safeDays 天。"
+        })
+        _state.update { it.copy(historyRetentionDays = safeDays) }
     }
 
     fun startRecognition() {
@@ -215,14 +274,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun publish(message: String? = null, progress: Int? = null) {
         queueStore.save(jobs)
+        queueStore.saveHistory(history)
         _state.update { current -> current.copy(
             jobs = snapshot(),
+            history = historySnapshot(),
             status = message ?: current.status,
             progress = progress ?: current.progress
         ) }
     }
 
     private fun snapshot() = jobs.map { it.copy() }
+
+    private fun historySnapshot() = history.map { batch ->
+        batch.copy(jobs = batch.jobs.map { it.copy() })
+    }
+
+    private fun archive(candidates: List<PhotoJob>) {
+        val described = candidates.filter { it.description.isNotBlank() }.map { it.copy() }
+        if (described.isEmpty()) return
+        history.add(0, HistoryBatch(jobs = described))
+        val days = _state.value.historyRetentionDays
+        val retained = retainHistory(history, days)
+        history.clear()
+        history.addAll(retained)
+    }
 
     private fun summary(): String {
         val complete = jobs.count { it.status == JobStatus.COMPLETED }

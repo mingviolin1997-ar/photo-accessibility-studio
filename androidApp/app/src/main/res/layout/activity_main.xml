@@ -112,6 +112,12 @@
         <Button android:id="@+id/deselectAllButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp" android:text="@string/deselect_all" />
         <Button android:id="@+id/recognizeButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp" android:text="@string/recognize" />
         <Button android:id="@+id/writeSelectedButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp" android:text="@string/write_selected" />
+        <Button
+            android:id="@+id/clearCurrentButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:text="@string/clear_current" />
 
         <ProgressBar
             android:id="@+id/progressBar"
@@ -144,5 +150,49 @@
             android:layout_height="wrap_content"
             android:importantForAccessibility="yes"
             android:nestedScrollingEnabled="false" />
+
+        <Button
+            android:id="@+id/historyToggleButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:minHeight="56dp"
+            android:text="@string/history_collapsed" />
+
+        <LinearLayout
+            android:id="@+id/historyPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/historySummaryText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/history_safety" />
+
+            <Button
+                android:id="@+id/historyRetentionButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="56dp"
+                android:text="@string/history_retention" />
+
+            <Button
+                android:id="@+id/clearHistoryButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="56dp"
+                android:text="@string/clear_history" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/historyList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:importantForAccessibility="yes"
+                android:nestedScrollingEnabled="false" />
+        </LinearLayout>
     </LinearLayout>
 </androidx.core.widget.NestedScrollView>
