@@ -9,6 +9,8 @@ on:
       - "Sources/**"
       - "Tests/**"
       - "scripts/**"
+      - "AppBundle/**"
+      - ".github/workflows/macos.yml"
 
 jobs:
   test:
@@ -18,6 +20,9 @@ jobs:
       - name: Install ExifTool
         run: brew install exiftool
       - name: Run Swift tests
+        env:
+          RUN_RUNTIME_DOWNLOAD_INTEGRATION: "1"
+          RUN_RUNTIME_NETWORK_PROBE: "1"
         run: swift test
       - name: Build app bundle
         run: zsh scripts/build-app.sh

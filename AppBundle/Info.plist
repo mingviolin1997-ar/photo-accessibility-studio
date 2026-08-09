@@ -17,14 +17,14 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-	<string>0.3.0</string>
+    <string>0.8.0</string>
     <key>CFBundleVersion</key>
-	<string>3</string>
+    <string>8</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>连接这台 Mac 上的 Ollama 服务以生成照片无障碍描述。</string>
+    <string>连接这台 Mac 上的 MLX 或 Ollama 本地服务以生成照片无障碍描述。</string>
 </dict>
 </plist>

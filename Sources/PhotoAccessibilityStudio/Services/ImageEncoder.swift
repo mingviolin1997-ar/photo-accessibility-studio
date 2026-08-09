@@ -1,5 +1,7 @@
-import AppKit
+import CoreGraphics
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 enum ImageEncoderError: LocalizedError {
     case cannotOpen
@@ -15,29 +17,50 @@ enum ImageEncoderError: LocalizedError {
     }
 }
 
-struct ImageEncoder {
-    func jpegBase64(for url: URL, maximumDimension: CGFloat) throws -> String {
-        guard let image = NSImage(contentsOf: url) else { throw ImageEncoderError.cannotOpen }
-        let original = image.size
-        let scale = min(1, maximumDimension / max(original.width, original.height))
-        let target = NSSize(width: max(1, original.width * scale),
-                            height: max(1, original.height * scale))
-        let rendered = NSImage(size: target)
-        rendered.lockFocus()
-        NSGraphicsContext.current?.imageInterpolation = .high
-        image.draw(in: NSRect(origin: .zero, size: target),
-                   from: .zero,
-                   operation: .copy,
-                   fraction: 1)
-        rendered.unlockFocus()
-        guard let tiff = rendered.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff) else {
+struct EncodedModelImage: Equatable, Sendable {
+    let base64: String
+    let pixelWidth: Int
+    let pixelHeight: Int
+    let byteCount: Int
+}
+
+struct ImageEncoder: Sendable {
+    func encode(for url: URL, maximumDimension: CGFloat) throws -> EncodedModelImage {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [
+            kCGImageSourceShouldCache: false
+        ] as CFDictionary), CGImageSourceGetCount(source) > 0 else {
+            throw ImageEncoderError.cannotOpen
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(1, Int(maximumDimension.rounded())),
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
             throw ImageEncoderError.cannotRender
         }
-        guard let data = bitmap.representation(using: .jpeg,
-                                               properties: [.compressionFactor: 0.9]) else {
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output,
+            UTType.jpeg.identifier as CFString,
+            1,
+            nil
+        ) else { throw ImageEncoderError.cannotEncode }
+        CGImageDestinationAddImage(destination, thumbnail, [
+            kCGImageDestinationLossyCompressionQuality: 0.82
+        ] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
             throw ImageEncoderError.cannotEncode
         }
-        return data.base64EncodedString()
+        let data = output as Data
+        return EncodedModelImage(base64: data.base64EncodedString(),
+                                 pixelWidth: thumbnail.width,
+                                 pixelHeight: thumbnail.height,
+                                 byteCount: data.count)
+    }
+
+    func jpegBase64(for url: URL, maximumDimension: CGFloat) throws -> String {
+        try encode(for: url, maximumDimension: maximumDimension).base64
     }
 }

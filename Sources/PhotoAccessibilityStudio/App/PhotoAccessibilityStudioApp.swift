@@ -11,7 +11,11 @@ struct PhotoAccessibilityStudioApp: App {
             "autoWriteAfterRecognition": false,
             "descriptionStyle": DescriptionStyle.medium.rawValue,
             "includeCaptureAdvice": false,
-            "progressSoundEnabled": true
+            "alwaysRunIndependentReview": false,
+            "selectedVisionModel": VisionModel.qwen35_4B.ollamaName,
+            "selectedVisionModelID": VisionModel.qwen35_4B.rawValue,
+            "progressSoundEnabled": true,
+            "historyRetentionDays": 30
         ])
         if !defaults.bool(forKey: "exportWorkflowV2Migration") {
             defaults.set(false, forKey: "autoWriteAfterRecognition")
@@ -26,6 +30,12 @@ struct PhotoAccessibilityStudioApp: App {
                 .dynamicTypeSize(dynamicTypeSize)
         }
         .commands {
+            CommandGroup(replacing: .appSettings) {
+                SettingsLink {
+                    Text("设置…")
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
             CommandGroup(after: .newItem) {
                 Button("添加照片…") { viewModel.choosePhotos() }
                     .keyboardShortcut("o", modifiers: .command)
@@ -40,6 +50,9 @@ struct PhotoAccessibilityStudioApp: App {
                 Button("批量导出已选结果…") { viewModel.chooseExportFolder() }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
                     .disabled(!viewModel.canExport)
+                Button("删除当前所选素材") { viewModel.removeSelected() }
+                    .keyboardShortcut(.delete, modifiers: .command)
+                    .disabled(!viewModel.canDeleteSelected)
             }
             CommandMenu("显示") {
                 Button("放大文本") { textScale = min(2, textScale + 0.25) }
@@ -49,6 +62,9 @@ struct PhotoAccessibilityStudioApp: App {
                 Button("实际大小") { textScale = 1 }
                     .keyboardShortcut("0", modifiers: .command)
             }
+        }
+        Settings {
+            SettingsView(viewModel: viewModel)
         }
     }
 

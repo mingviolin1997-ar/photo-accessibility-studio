@@ -34,7 +34,8 @@ extension BatchViewModel {
                     $0.status = .writing
                     $0.errorMessage = nil
                 }
-                statusMessage = "正在导出并验证第 \(offset + 1) 张，共 \(ids.count) 张：\(job.displayName)"
+                let sequence = (jobs.firstIndex(where: { $0.id == id }) ?? offset) + 1
+                statusMessage = "正在导出并验证第 \(sequence) 张照片；本批共 \(ids.count) 张。"
                 do {
                     let service = batchExportService
                     let exported = try await Task.detached {

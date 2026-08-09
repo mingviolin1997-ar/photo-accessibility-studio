@@ -30,7 +30,10 @@ extension BatchViewModel {
                                                         includingPropertiesForKeys: keys,
                                                         options: options)
         let urls = (enumerator?.allObjects as? [URL] ?? []).filter { url in
-            guard AppConfiguration.supportedExtensions.contains(url.pathExtension.lowercased()),
+            let ext = url.pathExtension.lowercased()
+            let isRecognizedImage = AppConfiguration.supportedExtensions.contains(ext)
+                || UTType(filenameExtension: ext)?.conforms(to: .image) == true
+            guard isRecognizedImage,
                   let values = try? url.resourceValues(forKeys: Set(keys)) else { return false }
             return values.isRegularFile == true && values.isSymbolicLink != true
         }
@@ -40,28 +43,50 @@ extension BatchViewModel {
     func addPhotos(_ urls: [URL]) {
         if !isProcessing { recognitionProgress = nil }
         let existing = Set(jobs.map { $0.url.standardizedFileURL })
-        let valid = urls.filter {
-            AppConfiguration.supportedExtensions.contains($0.pathExtension.lowercased()) &&
+        let unique = urls.filter {
             !existing.contains($0.standardizedFileURL)
         }
-        jobs.append(contentsOf: valid.map(PhotoJob.init))
+        var supported: [URL] = []
+        var additions: [PhotoJob] = []
+        for url in unique {
+            let ext = url.pathExtension.lowercased()
+            if AppConfiguration.supportedExtensions.contains(ext) {
+                supported.append(url)
+                additions.append(PhotoJob(url: url))
+            } else if UTType(filenameExtension: ext)?.conforms(to: .image) == true {
+                var job = PhotoJob(url: url)
+                job.status = .failed
+                job.errorMessage = "已保留这张素材，但当前还不能写入 .\(ext.isEmpty ? "未知" : ext) 格式的 Apple 图像描述。请转换格式后重试；原文件未修改。"
+                additions.append(job)
+            }
+        }
+        jobs.append(contentsOf: additions)
         if selectionID == nil { selectionID = jobs.first?.id }
-        statusMessage = "已添加 \(valid.count) 张照片，共 \(jobs.count) 张。"
+        let unsupportedCount = additions.count - supported.count
+        statusMessage = unsupportedCount == 0
+            ? "已添加 \(supported.count) 张照片，共 \(jobs.count) 张。"
+            : "已添加 \(additions.count) 张照片，其中 \(unsupportedCount) 张格式暂不能写入；软件没有静默丢弃。"
         announce(statusMessage)
-        readExistingMetadata(for: valid)
+        readExistingMetadata(for: supported)
     }
 
     private func readExistingMetadata(for urls: [URL]) {
         Task {
+            let reader = PhotoMetadataReader()
+            let metadata = (try? await Task.detached(priority: .utility) {
+                try reader.read(urls)
+            }.value) ?? [:]
             for url in urls {
-                let writer = metadataWriter
-                let value = try? await Task.detached {
-                    try writer.readDescription(from: url)
-                }.value
                 if let id = jobs.first(where: {
                     $0.url.standardizedFileURL == url.standardizedFileURL
-                })?.id {
-                    update(id: id) { $0.existingDescription = value }
+                })?.id, let value = metadata[url.standardizedFileURL] {
+                    update(id: id) {
+                        $0.existingDescription = value.existingDescription
+                        $0.captureDate = value.captureDate
+                        $0.sourceFormat = value.format
+                        $0.pixelWidth = value.pixelWidth
+                        $0.pixelHeight = value.pixelHeight
+                    }
                 }
             }
         }
