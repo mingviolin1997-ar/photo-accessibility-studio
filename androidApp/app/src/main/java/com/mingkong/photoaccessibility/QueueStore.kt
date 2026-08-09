@@ -68,6 +68,9 @@ class QueueStore(context: Context) {
                 uri = item.getString("uri").toUri(),
                 displayName = item.getString("name"),
                 mimeType = item.optString("mime").ifBlank { null },
+                captureTime = item.optString("captureTime").ifBlank { null },
+                pixelWidth = item.optInt("pixelWidth").takeIf { it > 0 },
+                pixelHeight = item.optInt("pixelHeight").takeIf { it > 0 },
                 selectedForWriting = item.optBoolean("selected", true),
                 status = status,
                 description = item.optString("description"),
@@ -83,6 +86,9 @@ class QueueStore(context: Context) {
                 put("uri", job.uri.toString())
                 put("name", job.displayName)
                 put("mime", job.mimeType ?: "")
+                put("captureTime", job.captureTime ?: "")
+                put("pixelWidth", job.pixelWidth ?: 0)
+                put("pixelHeight", job.pixelHeight ?: 0)
                 put("selected", job.selectedForWriting)
                 put("status", job.status.name)
                 put("description", job.description)

@@ -39,6 +39,36 @@
             android:accessibilityLiveRegion="polite"
             android:text="@string/model_checking" />
 
+        <TextView
+            android:id="@+id/engineDiagnosticText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:accessibilityLiveRegion="polite"
+            android:text="@string/engine_checking" />
+
+        <TextView
+            android:id="@+id/activeEngineText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/active_engine_not_loaded" />
+
+        <Button
+            android:id="@+id/chooseEngineButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minHeight="56dp"
+            android:text="@string/choose_engine" />
+
+        <Button
+            android:id="@+id/chooseModelButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:text="@string/choose_model" />
+
         <ProgressBar
             android:id="@+id/modelProgressBar"
             style="?android:attr/progressBarStyleHorizontal"
@@ -57,12 +87,27 @@
             android:visibility="gone" />
 
         <Button
+            android:id="@+id/cancelModelDownloadButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:text="@string/cancel_model_download"
+            android:visibility="gone" />
+
+        <Button
             android:id="@+id/checkModelButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:minHeight="56dp"
             android:text="@string/model_button" />
+
+        <Button
+            android:id="@+id/deleteModelButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:text="@string/delete_model" />
 
         <TextView
             android:id="@+id/styleHeading"
@@ -112,6 +157,7 @@
         <Button android:id="@+id/deselectAllButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp" android:text="@string/deselect_all" />
         <Button android:id="@+id/recognizeButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp" android:text="@string/recognize" />
         <Button android:id="@+id/writeSelectedButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp" android:text="@string/write_selected" />
+        <Button android:id="@+id/exportAllButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp" android:text="@string/export_all" />
         <Button
             android:id="@+id/clearCurrentButton"
             android:layout_width="match_parent"

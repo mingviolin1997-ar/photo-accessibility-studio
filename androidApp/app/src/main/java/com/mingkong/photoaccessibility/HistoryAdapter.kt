@@ -50,33 +50,37 @@ class HistoryAdapter(
             }
 
             details.removeAllViews()
-            batch.jobs.forEach { job ->
-                details.addView(historyJobView(batch, job))
+            batch.jobs.forEachIndexed { index, job ->
+                details.addView(historyJobView(batch, job, index + 1))
             }
             deleteBatch.contentDescription =
                 "删除历史批次 " + batch.name + "，不删除手机媒体库中的照片"
             deleteBatch.setOnClickListener { onDeleteBatch(batch.id) }
         }
 
-        private fun historyJobView(batch: HistoryBatch, job: PhotoJob): View {
+        private fun historyJobView(batch: HistoryBatch, job: PhotoJob, number: Int): View {
             val context = itemView.context
             val padding = (12 * context.resources.displayMetrics.density).toInt()
+            val itemLabel = "第 $number 张照片"
             return LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(padding, padding, padding, padding)
                 addView(TextView(context).apply {
-                    text = job.displayName
+                    text = itemLabel
                     setTypeface(typeface, Typeface.BOLD)
                 })
                 addView(TextView(context).apply {
+                    text = "拍摄时间：${job.captureTime ?: "照片中没有可读取的拍摄时间"}"
+                })
+                addView(TextView(context).apply {
                     text = job.description
-                    contentDescription = job.displayName + " 的无障碍描述：" + job.description
+                    contentDescription = "$itemLabel 的无障碍描述：${job.description}"
                 })
                 addView(Button(context).apply {
                     text = context.getString(R.string.delete_history_item)
                     minHeight = (48 * context.resources.displayMetrics.density).toInt()
                     contentDescription =
-                        "删除 " + job.displayName + " 的历史记录，不删除手机媒体库中的照片"
+                        "删除${itemLabel}的历史记录，不删除手机媒体库中的照片"
                     setOnClickListener { onDeleteItem(batch.id, job.id) }
                 })
             }

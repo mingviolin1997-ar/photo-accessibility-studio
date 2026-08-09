@@ -19,7 +19,9 @@ jobs:
           cache: gradle
       - name: Test and build APK
         working-directory: androidApp
-        run: ./gradlew testDebugUnitTest assembleDebug --stacktrace
+        env:
+          PAS_RUN_ANDROID_NETWORK_TEST: "1"
+        run: ./gradlew testDebugUnitTest lintDebug verifyDebugApkRuntime --stacktrace
       - uses: actions/upload-artifact@v7
         with:
           name: PhotoAccessibilityStudio-Android

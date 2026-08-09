@@ -13,6 +13,8 @@ object DownloadText {
     fun progress(value: DownloadProgress): String {
         val amount = "${bytes(value.downloaded)} / ${bytes(value.total)}"
         val speed = if (value.bytesPerSecond > 0) "，${bytes(value.bytesPerSecond)}/秒" else ""
-        return "${value.currentStep}：$amount$speed"
+        val attempt = if (value.attempt > 1) "，第 ${value.attempt} 次连接" else ""
+        val detail = value.detail?.takeIf { it.isNotBlank() }?.let { "。$it" } ?: ""
+        return "${value.currentStep}：$amount$speed$attempt$detail"
     }
 }
