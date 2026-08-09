@@ -9,6 +9,7 @@ data class MainUiState(
     val modelProgress: Int = 0,
     val modelProgressText: String = "",
     val downloadingModel: Boolean = false,
+    val modelDownloadCancelable: Boolean = false,
     val engineChoicePending: Boolean = false,
     val modelChoicePending: Boolean = false,
     val setupPromptPending: Boolean = false,

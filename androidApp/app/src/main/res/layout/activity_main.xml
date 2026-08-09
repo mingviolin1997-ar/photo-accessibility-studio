@@ -79,6 +79,14 @@
             android:visibility="gone" />
 
         <Button
+            android:id="@+id/cancelModelDownloadButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:text="@string/cancel_model_download"
+            android:visibility="gone" />
+
+        <Button
             android:id="@+id/checkModelButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

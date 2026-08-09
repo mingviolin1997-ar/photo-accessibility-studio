@@ -11,8 +11,8 @@ android {
         applicationId = "com.mingkong.photoaccessibility"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.6.0-test"
+        versionCode = 7
+        versionName = "0.7.0-test"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a") }
     }

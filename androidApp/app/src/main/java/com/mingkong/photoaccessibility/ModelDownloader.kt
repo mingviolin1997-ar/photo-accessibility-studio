@@ -2,24 +2,47 @@ package com.mingkong.photoaccessibility
 
 import android.content.Context
 import android.os.storage.StorageManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.net.URL
 import java.security.MessageDigest
+import javax.net.ssl.SSLException
 import kotlin.coroutines.coroutineContext
 
 data class DownloadProgress(
     val downloaded: Long,
     val total: Long,
     val currentStep: String,
-    val bytesPerSecond: Long
+    val bytesPerSecond: Long,
+    val detail: String? = null,
+    val attempt: Int = 1
 ) {
     val percent: Int
         get() = if (total <= 0) 0 else ((downloaded * 100) / total).toInt().coerceIn(0, 100)
+}
+
+private class NonRetryableDownloadException(message: String) : IOException(message)
+
+private class DownloadActivity(initialBytes: Long) {
+    @Volatile var downloaded: Long = initialBytes
+    @Volatile var lastChangeMillis: Long = System.currentTimeMillis()
+
+    fun update(value: Long) {
+        if (value > downloaded) lastChangeMillis = System.currentTimeMillis()
+        downloaded = value
+    }
 }
 
 internal class DownloadSpeedMeter(
@@ -86,7 +109,7 @@ class ModelDownloader(private val context: Context) {
                 "正在校验已有 ${model.displayName}",
                 0
             ))
-            if (verify(modelFile, model.expectedSha256)) return@withContext markComplete(model)
+            if (verify(modelFile, model, onProgress)) return@withContext markComplete(model)
             require(modelFile.delete()) { "已有模型校验失败且无法删除" }
         }
 
@@ -100,7 +123,7 @@ class ModelDownloader(private val context: Context) {
                 "正在校验已下载的 ${model.displayName}",
                 0
             ))
-            require(verify(partFile, model.expectedSha256)) {
+            require(verify(partFile, model, onProgress)) {
                 "${model.displayName} SHA-256 校验失败"
             }
             finishPart(model)
@@ -115,7 +138,7 @@ class ModelDownloader(private val context: Context) {
             "下载完成，正在校验 ${model.displayName} 的 SHA-256",
             0
         ))
-        require(verify(partFile, model.expectedSha256)) {
+        require(verify(partFile, model, onProgress)) {
             "${model.displayName} SHA-256 校验失败"
         }
         finishPart(model)
@@ -151,45 +174,112 @@ class ModelDownloader(private val context: Context) {
         model: VisionModel,
         huggingFaceToken: String?,
         onProgress: (DownloadProgress) -> Unit
-    ) {
+    ) = coroutineScope {
         val target = partFile(model)
+        var lastError: Throwable? = null
+        for (attempt in 1..3) {
+            coroutineContext.ensureActive()
+            val activity = DownloadActivity(target.length().coerceAtMost(model.expectedBytes))
+            val heartbeat = launch(Dispatchers.IO) {
+                while (isActive) {
+                    delay(5_000)
+                    val idleSeconds = ((System.currentTimeMillis() - activity.lastChangeMillis) / 1_000)
+                        .coerceAtLeast(0)
+                    onProgress(DownloadProgress(
+                        activity.downloaded,
+                        model.expectedBytes,
+                        "正在下载 ${model.displayName}",
+                        0,
+                        if (idleSeconds >= 15) {
+                            "连续 ${idleSeconds} 秒未收到新数据；连接会在 30 秒超时后自动重试"
+                        } else {
+                            "正在连接或等待下一批模型数据"
+                        },
+                        attempt
+                    ))
+                }
+            }
+            try {
+                downloadAttempt(model, huggingFaceToken, target, attempt, activity, onProgress)
+                heartbeat.cancel()
+                return@coroutineScope
+            } catch (cancelled: CancellationException) {
+                heartbeat.cancel()
+                throw cancelled
+            } catch (error: NonRetryableDownloadException) {
+                heartbeat.cancel()
+                throw error
+            } catch (error: Throwable) {
+                heartbeat.cancel()
+                lastError = error
+                if (attempt < 3) {
+                    onProgress(DownloadProgress(
+                        target.length(),
+                        model.expectedBytes,
+                        "下载连接中断，准备第 ${attempt + 1} 次尝试",
+                        0,
+                        "${friendlyFailure(error)}；${attempt * 2} 秒后自动断点续传",
+                        attempt
+                    ))
+                    delay(attempt * 2_000L)
+                }
+            }
+        }
+        throw IOException("${friendlyFailure(lastError)}；已尝试 3 次，现有进度已保留，请检查后点击重试")
+    }
+
+    private suspend fun downloadAttempt(
+        model: VisionModel,
+        huggingFaceToken: String?,
+        target: File,
+        attempt: Int,
+        activity: DownloadActivity,
+        onProgress: (DownloadProgress) -> Unit
+    ) {
         var offset = target.length().coerceAtMost(model.expectedBytes)
         val url = "https://huggingface.co/${model.repository}/resolve/${model.revision}/${model.fileName}?download=true"
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.instanceFollowRedirects = true
-        connection.connectTimeout = 30_000
-        connection.readTimeout = 120_000
+        connection.connectTimeout = 20_000
+        connection.readTimeout = 30_000
         connection.setRequestProperty("Accept-Encoding", "identity")
         if (!huggingFaceToken.isNullOrBlank()) {
             connection.setRequestProperty("Authorization", "Bearer ${huggingFaceToken.trim()}")
         }
         if (offset > 0) connection.setRequestProperty("Range", "bytes=$offset-")
-        connection.connect()
-
-        if (offset > 0 && connection.responseCode == HttpURLConnection.HTTP_OK) {
-            require(target.delete()) { "服务器不支持断点续传，且无法重新开始下载" }
-            offset = 0
-        }
-        if (connection.responseCode == HttpURLConnection.HTTP_UNAUTHORIZED ||
-            connection.responseCode == HttpURLConnection.HTTP_FORBIDDEN
-        ) {
-            connection.disconnect()
-            error("模型仓库拒绝访问；请确认已接受 Gemma 许可，且 Hugging Face 令牌具有读取权限")
-        }
-        require(connection.responseCode == HttpURLConnection.HTTP_OK ||
-            connection.responseCode == HttpURLConnection.HTTP_PARTIAL) {
-            "模型下载失败：HTTP ${connection.responseCode}"
-        }
-
-        val speed = DownloadSpeedMeter().also { it.reset(offset) }
-        var lastReportedSpeed = -1L
-        onProgress(DownloadProgress(
-            offset,
-            model.expectedBytes,
-            "正在下载 ${model.displayName}",
-            0
-        ))
         try {
+            connection.connect()
+            val responseCode = connection.responseCode
+            if (offset > 0 && responseCode == HttpURLConnection.HTTP_OK) {
+                if (!target.delete()) {
+                    throw NonRetryableDownloadException("服务器不支持断点续传，且无法清理旧的临时文件")
+                }
+                offset = 0
+                activity.update(0)
+            }
+            if (responseCode == HttpURLConnection.HTTP_UNAUTHORIZED ||
+                responseCode == HttpURLConnection.HTTP_FORBIDDEN
+            ) {
+                throw NonRetryableDownloadException(
+                    "模型仓库拒绝访问；请确认已接受 Gemma 许可，且 Hugging Face 令牌具有读取权限"
+                )
+            }
+            if (responseCode != HttpURLConnection.HTTP_OK &&
+                responseCode != HttpURLConnection.HTTP_PARTIAL
+            ) {
+                throw IOException("模型服务器返回 HTTP $responseCode")
+            }
+
+            val speed = DownloadSpeedMeter().also { it.reset(offset) }
+            var lastReportedAt = 0L
+            onProgress(DownloadProgress(
+                offset,
+                model.expectedBytes,
+                if (offset > 0) "正在断点续传 ${model.displayName}" else "正在下载 ${model.displayName}",
+                0,
+                "第 $attempt 次连接已建立",
+                attempt
+            ))
             FileOutputStream(target, offset > 0).use { output ->
                 connection.inputStream.use { input ->
                     val buffer = ByteArray(256 * 1024)
@@ -200,15 +290,18 @@ class ModelDownloader(private val context: Context) {
                         if (count < 0) break
                         output.write(buffer, 0, count)
                         written += count
-                        val currentSpeed = speed.update(written)
-                        if (currentSpeed != lastReportedSpeed || written >= model.expectedBytes) {
+                        activity.update(written)
+                        val now = System.currentTimeMillis()
+                        if (now - lastReportedAt >= 250 || written >= model.expectedBytes) {
                             onProgress(DownloadProgress(
                                 written,
                                 model.expectedBytes,
                                 "正在下载 ${model.displayName}",
-                                currentSpeed
+                                speed.update(written),
+                                null,
+                                attempt
                             ))
-                            lastReportedSpeed = currentSpeed
+                            lastReportedAt = now
                         }
                     }
                     output.fd.sync()
@@ -219,18 +312,48 @@ class ModelDownloader(private val context: Context) {
         }
     }
 
-    private fun verify(file: File, expectedSha256: String): Boolean {
+    internal fun friendlyFailure(error: Throwable?): String = when (error) {
+        is SocketTimeoutException -> "模型服务器连续 30 秒没有返回数据，连接超时"
+        is UnknownHostException -> "无法解析模型服务器地址；请检查网络、DNS 或代理"
+        is SSLException -> "与模型服务器建立安全连接失败；请检查系统时间、网络或代理证书"
+        is NonRetryableDownloadException -> error.message ?: "模型仓库拒绝下载"
+        is IOException -> error.message ?: "网络读写失败"
+        null -> "未知下载错误"
+        else -> error.message ?: error.javaClass.simpleName
+    }
+
+    private suspend fun verify(
+        file: File,
+        model: VisionModel,
+        onProgress: (DownloadProgress) -> Unit
+    ): Boolean {
         val digest = MessageDigest.getInstance("SHA-256")
+        val speed = DownloadSpeedMeter().also { it.reset(0) }
+        var checked = 0L
+        var lastReportedAt = 0L
         file.inputStream().buffered().use { input ->
             val buffer = ByteArray(1024 * 1024)
             while (true) {
+                coroutineContext.ensureActive()
                 val count = input.read(buffer)
                 if (count < 0) break
                 digest.update(buffer, 0, count)
+                checked += count
+                val now = System.currentTimeMillis()
+                if (now - lastReportedAt >= 250 || checked >= file.length()) {
+                    onProgress(DownloadProgress(
+                        checked,
+                        file.length(),
+                        "正在校验 ${model.displayName} 的 SHA-256",
+                        speed.update(checked),
+                        "正在读取本地文件并核对完整性"
+                    ))
+                    lastReportedAt = now
+                }
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
-            .equals(expectedSha256, ignoreCase = true)
+            .equals(model.expectedSha256, ignoreCase = true)
     }
 
     private fun finishPart(model: VisionModel) {

@@ -66,8 +66,17 @@ enum class VisionModel(
     val downloadSize: String
         get() = String.format(Locale.US, "约 %.2f GB", expectedBytes / 1_000_000_000.0)
 
+    val platformCompatibility: String
+        get() = when (this) {
+            QWEN_35_4B -> "平台：Android 支持 LiteRT-LM；macOS 支持 MLX 或 Ollama；Windows 当前没有本软件版本。"
+            GEMMA_4_E2B -> "平台：Android 支持 LiteRT-LM，适合 8GB 内存设备；macOS 支持 MLX 或 Ollama；Windows 当前没有本软件版本。"
+            GEMMA_4_E4B -> "平台：Android 支持 LiteRT-LM，建议 12GB 内存旗舰设备；macOS 支持 MLX 或 Ollama并建议 24GB 内存；Windows 当前没有本软件版本。"
+            GEMMA_3N_E2B -> "平台：Android 支持 LiteRT-LM；macOS 使用 MLX 可识别照片，Ollama 包暂不用于照片；Windows 当前没有本软件版本。"
+            GEMMA_3N_E4B -> "平台：Android 支持 LiteRT-LM并建议 12GB 内存；macOS 使用 MLX 可识别照片；Windows 当前没有本软件版本。"
+        }
+
     val selectionLabel: String
-        get() = "$displayName，$downloadSize。$recommendation"
+        get() = "$displayName，$downloadSize。$recommendation $platformCompatibility"
 
     companion object {
         fun stored(rawValue: String?): VisionModel =

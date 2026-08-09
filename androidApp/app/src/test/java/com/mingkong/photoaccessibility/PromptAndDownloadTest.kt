@@ -24,6 +24,9 @@ class PromptAndDownloadTest {
             assertTrue(model.expectedSha256.matches(Regex("[0-9a-f]{64}")))
             assertTrue(model.revision.matches(Regex("[0-9a-f]{40}")))
             assertTrue(model.recommendation.contains("Android"))
+            assertTrue(model.platformCompatibility.contains("Android"))
+            assertTrue(model.platformCompatibility.contains("macOS"))
+            assertTrue(model.platformCompatibility.contains("Windows"))
         }
     }
 
@@ -47,5 +50,19 @@ class PromptAndDownloadTest {
         assertEquals(1_000_000L, meter.update(1_000_000L))
         now = 2_000_000_000L
         assertEquals(1_300_000L, meter.update(3_000_000L))
+    }
+
+    @Test fun downloadTextExplainsRetryAndStallState() {
+        val text = DownloadText.progress(DownloadProgress(
+            downloaded = 24_000,
+            total = 5_180_000_000,
+            currentStep = "正在下载模型",
+            bytesPerSecond = 0,
+            detail = "连续 20 秒未收到新数据",
+            attempt = 2
+        ))
+        assertTrue(text.contains("第 2 次连接"))
+        assertTrue(text.contains("连续 20 秒"))
+        assertTrue(text.contains("24.0 KB"))
     }
 }

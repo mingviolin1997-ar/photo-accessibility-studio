@@ -9,7 +9,9 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.core.content.edit
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,6 +26,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val downloader = ModelDownloader(application)
     private val metadataWriter = ImageMetadataWriter(resolver)
     private val runtime = LiteRtVisionRuntime(resolver, application.cacheDir)
+    private var modelDownloadJob: Job? = null
     private val historyRetentionDays =
         settings.getInt("historyRetentionDays", 30).coerceIn(1, 365)
     private val restoredJobs = queueStore.load()
@@ -150,10 +153,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.downloadingModel) return
         val model = _state.value.selectedModel
         _state.update {
-            it.copy(downloadingModel = true, modelReady = false,
+            it.copy(downloadingModel = true, modelDownloadCancelable = true, modelReady = false,
                 modelStatus = "准备下载固定版本 ${model.displayName}。")
         }
-        viewModelScope.launch {
+        modelDownloadJob?.cancel()
+        modelDownloadJob = viewModelScope.launch {
             try {
                 val file = downloader.download(model, huggingFaceToken) { progress ->
                     _state.update { current -> current.copy(
@@ -163,15 +167,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     ) }
                 }
                 loadModel(file, model, _state.value.selectedEngine)
-            } catch (error: Throwable) {
+            } catch (cancelled: CancellationException) {
                 _state.update { it.copy(
                     downloadingModel = false,
+                    modelDownloadCancelable = false,
                     modelReady = false,
                     installedModels = downloader.installedModels(),
-                    modelStatus = "自动配置失败：${error.message ?: error.javaClass.simpleName}"
+                    modelProgressText = "下载已取消。已经完成的数据仍保留；再次点击下载即可断点续传。",
+                    modelStatus = "已取消 ${model.displayName} 下载；可随时继续。"
+                ) }
+            } catch (error: Throwable) {
+                val reason = error.message ?: error.javaClass.simpleName
+                _state.update { it.copy(
+                    downloadingModel = false,
+                    modelDownloadCancelable = false,
+                    modelReady = false,
+                    installedModels = downloader.installedModels(),
+                    modelProgressText = "失败原因：$reason。已下载部分会保留；检查网络、权限或空间后点击重试。",
+                    modelStatus = "自动配置失败：$reason"
                 ) }
             }
+            modelDownloadJob = null
         }
+    }
+
+    fun cancelModelDownload() {
+        if (!_state.value.modelDownloadCancelable) return
+        _state.update {
+            it.copy(modelStatus = "正在停止模型下载；已经完成的数据会保留。")
+        }
+        modelDownloadJob?.cancel()
     }
 
     fun deleteSelectedModel() {
@@ -422,12 +447,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val inferenceEngine = _state.value.selectedEngine
         _state.update { it.copy(
             downloadingModel = true,
+            modelDownloadCancelable = false,
             modelStatus = "正在用 ${inferenceEngine.displayName} 加载 ${model.displayName}。"
         ) }
         viewModelScope.launch {
             try { loadModel(downloader.modelFile(model), model, inferenceEngine) }
             catch (error: Throwable) {
                 _state.update { it.copy(downloadingModel = false, modelReady = false,
+                    modelDownloadCancelable = false,
                     modelStatus = "本地模型加载失败：${error.message ?: error.javaClass.simpleName}") }
             }
         }
@@ -441,6 +468,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val result = runtime.load(file, model, inferenceEngine)
         _state.update { it.copy(
             downloadingModel = false,
+            modelDownloadCancelable = false,
             modelReady = true,
             installedModels = downloader.installedModels(),
             activeEngineLabel = result.activeEngineLabel,

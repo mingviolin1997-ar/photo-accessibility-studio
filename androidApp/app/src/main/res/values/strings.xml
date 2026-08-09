@@ -8,6 +8,7 @@
     <string name="choose_engine">选择推理引擎</string>
     <string name="choose_model">选择视觉模型</string>
     <string name="model_progress">模型下载与配置进度</string>
+    <string name="cancel_model_download">取消当前模型下载（保留进度）</string>
     <string name="model_button">下载或检查当前模型</string>
     <string name="delete_model">移除当前模型以释放空间</string>
     <string name="style_heading">描述详细度</string>

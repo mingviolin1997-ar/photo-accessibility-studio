@@ -107,6 +107,9 @@ class MainActivity : AppCompatActivity() {
             viewModel.requestModelChoice()
         }
         findViewById<Button>(R.id.checkModelButton).setOnClickListener { viewModel.requestModelSetup() }
+        findViewById<Button>(R.id.cancelModelDownloadButton).setOnClickListener {
+            viewModel.cancelModelDownload()
+        }
         findViewById<Button>(R.id.deleteModelButton).setOnClickListener { showDeleteModelDialog() }
         findViewById<Button>(R.id.addPhotosButton).setOnClickListener { photoPicker.launch(arrayOf("image/*")) }
         findViewById<Button>(R.id.selectAllButton).setOnClickListener { viewModel.selectAll(true) }
@@ -176,12 +179,17 @@ class MainActivity : AppCompatActivity() {
 
         val modelProgress = findViewById<ProgressBar>(R.id.modelProgressBar)
         val modelProgressText = findViewById<TextView>(R.id.modelProgressText)
-        val showModelProgress = state.downloadingModel || state.modelProgress == 100
+        val showModelProgress = state.downloadingModel || state.modelProgressText.isNotBlank()
         modelProgress.visibility = if (showModelProgress) View.VISIBLE else View.GONE
         modelProgressText.visibility = if (showModelProgress) View.VISIBLE else View.GONE
         modelProgress.progress = state.modelProgress
         modelProgress.contentDescription = "模型配置进度百分之 ${state.modelProgress}"
         modelProgressText.text = state.modelProgressText
+        findViewById<Button>(R.id.cancelModelDownloadButton).apply {
+            visibility = if (state.modelDownloadCancelable) View.VISIBLE else View.GONE
+            isEnabled = state.modelDownloadCancelable
+            contentDescription = "取消当前模型下载并保留已经完成的进度"
+        }
         val bucket = state.modelProgress / 10
         if (state.downloadingModel && bucket > lastDownloadBucket) {
             modelProgressText.announceForAccessibility("模型下载进度百分之 ${state.modelProgress}")
