@@ -3,6 +3,14 @@ import XCTest
 @testable import PhotoAccessibilityStudio
 
 final class OllamaIntegrationTests: XCTestCase {
+    func testInstalledRuntimeInspectionIsReady() async throws {
+        guard ProcessInfo.processInfo.environment["RUN_OLLAMA_INTEGRATION"] == "1" else {
+            throw XCTSkip("仅在显式启用本机 Ollama 集成测试时运行")
+        }
+        let missing = await RuntimeSetupService().inspect()
+        XCTAssertNil(missing)
+    }
+
     func testLocalQwenDoesNotInventPhotographyAdviceForFlatGraphic() async throws {
         guard ProcessInfo.processInfo.environment["RUN_OLLAMA_INTEGRATION"] == "1" else {
             throw XCTSkip("仅在显式启用本机 Ollama 集成测试时运行")

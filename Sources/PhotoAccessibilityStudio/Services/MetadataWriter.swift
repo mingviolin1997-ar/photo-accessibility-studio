@@ -39,7 +39,7 @@ struct MetadataWriter {
     let packetBuilder = XMPPacketBuilder()
 
     func readDescription(from url: URL) throws -> String? {
-        let output = try runner.run(executable: try exifToolURL(), arguments: [
+        let output = try runExifTool([
             "-config", "", "-charset", "filename=UTF8",
             "-s3", "-XMP-iptcExt:ArtworkContentDescription", "--", url.path
         ])
@@ -76,7 +76,7 @@ struct MetadataWriter {
                 .appendingPathComponent("pas-xmp-\(token).xmp")
             try packet.write(to: packetURL, options: .atomic)
             defer { try? FileManager.default.removeItem(at: packetURL) }
-            let output = try runner.run(executable: try exifToolURL(), arguments: [
+            let output = try runExifTool([
                 "-config", "", "-overwrite_original",
                 "-charset", "filename=UTF8",
                 "-XMP<=\(packetURL.path)",
@@ -130,22 +130,22 @@ struct MetadataWriter {
         }
     }
 
-    private func exifToolURL() throws -> URL {
-        for path in ["/opt/homebrew/bin/exiftool", "/usr/local/bin/exiftool", "/usr/bin/exiftool"]
-            where FileManager.default.isExecutableFile(atPath: path) {
-            return URL(fileURLWithPath: path)
-        }
-        throw MetadataWriterError.exifToolMissing
-    }
-
     func rawXMP(from url: URL) throws -> Data {
-        let output = try runner.run(executable: try exifToolURL(), arguments: [
+        let output = try runExifTool([
             "-config", "", "-b", "-XMP", "--", url.path
         ])
         guard output.status == 0 else {
             throw MetadataWriterError.commandFailed(clean(output.standardError))
         }
         return Data(output.standardOutput.utf8)
+    }
+
+    private func runExifTool(_ arguments: [String]) throws -> ProcessOutput {
+        guard let tool = RuntimeToolLocator.exifTool() else {
+            throw MetadataWriterError.exifToolMissing
+        }
+        return try runner.run(executable: tool.executable,
+                              arguments: tool.prefixArguments + arguments)
     }
 
     private func clean(_ value: String) -> String {

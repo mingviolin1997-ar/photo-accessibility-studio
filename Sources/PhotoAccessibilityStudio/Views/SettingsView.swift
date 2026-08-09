@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @ObservedObject var viewModel: BatchViewModel
     @Environment(\.dismiss) private var dismiss
     @AppStorage("interfaceTextScale") private var textScale = 1.0
     @AppStorage("descriptionStyle") private var descriptionStyle = DescriptionStyle.medium.rawValue
@@ -12,8 +13,14 @@ struct SettingsView: View {
             Section("本地模型") {
                 LabeledContent("模型", value: "qwen3.5:4b")
                 LabeledContent("服务地址", value: "127.0.0.1:11434")
-                Text("照片只发送到本机 Ollama，不会上传到网络。")
+                Text("应用保持轻量；缺少环境时会先征求同意，再自动下载、安装和校验。照片只发送到本机 Ollama，不会上传到网络。")
                     .foregroundStyle(.secondary)
+                Button("重新检查或自动配置本地环境") {
+                    dismiss()
+                    viewModel.checkModel()
+                }
+                .disabled(viewModel.isRuntimeInstalling)
+                .accessibilityHint("检查 Ollama、ExifTool 和 Qwen 模型；缺少时先弹窗征求下载同意")
             }
             Section("描述方式") {
                 Picker("描述详细度", selection: $descriptionStyle) {

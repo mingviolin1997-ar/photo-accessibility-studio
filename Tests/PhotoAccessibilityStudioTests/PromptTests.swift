@@ -2,6 +2,21 @@ import XCTest
 @testable import PhotoAccessibilityStudio
 
 final class PromptTests: XCTestCase {
+    func testRuntimeProgressShowsTransferredBytesAndSpeed() {
+        let progress = RuntimeProgress(step: "下载模型",
+                                       downloaded: 1_500_000,
+                                       total: 3_000_000,
+                                       bytesPerSecond: 500_000)
+        XCTAssertEqual(progress.fraction, 0.5)
+        XCTAssertTrue(progress.detail.contains("/"))
+        XCTAssertTrue(progress.detail.contains("/秒"))
+    }
+
+    func testRuntimeErrorsIncludeDiagnosticValue() {
+        XCTAssertEqual(RuntimeSetupError.downloadFailed("HTTP 500").errorDescription,
+                       "下载失败：HTTP 500")
+    }
+
     func testSanitizeRemovesKnownHeadingAndWhitespace() {
         XCTAssertEqual(
             AccessibilityDescriptionPrompt.sanitize("  无障碍描述：一只黑猫坐在窗边。\n"),
