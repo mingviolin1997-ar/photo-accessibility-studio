@@ -1,0 +1,24 @@
+name: macOS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "Package.swift"
+      - "Sources/**"
+      - "Tests/**"
+      - "scripts/**"
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ExifTool
+        run: brew install exiftool
+      - name: Run Swift tests
+        run: swift test
+      - name: Build app bundle
+        run: zsh scripts/build-app.sh
+

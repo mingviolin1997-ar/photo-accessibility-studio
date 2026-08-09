@@ -1,0 +1,15 @@
+.DS_Store
+.build/
+.swiftpm/
+outputs/
+work/
+DerivedData/
+*.xcuserstate
+
+# Android
+.gradle/
+local.properties
+**/build/
+*.jks
+*.keystore
+
