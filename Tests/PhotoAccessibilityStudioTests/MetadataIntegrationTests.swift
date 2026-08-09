@@ -74,6 +74,31 @@ final class MetadataIntegrationTests: XCTestCase {
         ))
     }
 
+    func testPacketBuilderKeepsDirectFieldAtTopLevelWhenPacketContainsNestedDescriptions() throws {
+        let existing = Data("""
+        <x:xmpmeta xmlns:x="adobe:ns:meta/">
+          <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+            <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/">
+              <crs:MaskGroupBasedCorrections><rdf:Seq><rdf:li>
+                <rdf:Description crs:What="Correction"></rdf:Description>
+              </rdf:li></rdf:Seq></crs:MaskGroupBasedCorrections>
+            </rdf:Description>
+          </rdf:RDF>
+        </x:xmpmeta>
+        """.utf8)
+        let data = try XMPPacketBuilder().build(existing: existing,
+                                                description: "顶层直接描述")
+        let xml = String(data: data, encoding: .utf8) ?? ""
+        let direct = xml.range(of: "<Iptc4xmpExt:ArtworkContentDescription>")
+        let nested = xml.range(of: "<crs:MaskGroupBasedCorrections>")
+        XCTAssertNotNil(direct)
+        XCTAssertNotNil(nested)
+        if let direct, let nested {
+            XCTAssertLessThan(direct.lowerBound, nested.lowerBound)
+        }
+        XCTAssertFalse(xml.contains("<Iptc4xmpExt:AOContentDescription"))
+    }
+
     func testFlatPacketRoundTripAcrossCommonFormats() throws {
         let formats: [(NSBitmapImageRep.FileType, String)] = [
             (.png, "png"), (.jpeg, "jpg"), (.tiff, "tiff")

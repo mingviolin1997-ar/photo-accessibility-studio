@@ -33,6 +33,10 @@ struct PhotoJob: Identifiable, Codable, Equatable {
     var generatedStyle: DescriptionStyle?
     var includedCaptureAdvice: Bool?
     var exportedURL: URL?
+    var captureDate: Date?
+    var sourceFormat: String?
+    var pixelWidth: Int?
+    var pixelHeight: Int?
 
     init(url: URL) {
         id = UUID()
@@ -43,4 +47,22 @@ struct PhotoJob: Identifiable, Codable, Equatable {
     }
 
     var displayName: String { url.lastPathComponent }
+
+    var captureTimeText: String {
+        guard let captureDate else { return "照片未记录拍摄时间" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyy年M月d日 HH:mm:ss"
+        return formatter.string(from: captureDate)
+    }
+
+    var dimensionsText: String? {
+        guard let pixelWidth, let pixelHeight else { return nil }
+        return "\(pixelWidth) × \(pixelHeight) 像素"
+    }
+
+    var usesSupportedWritableFormat: Bool {
+        AppConfiguration.supportedExtensions.contains(url.pathExtension.lowercased())
+    }
 }

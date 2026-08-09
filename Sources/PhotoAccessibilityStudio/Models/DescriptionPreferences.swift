@@ -34,10 +34,12 @@ enum DescriptionStyle: String, Codable, CaseIterable, Identifiable {
 struct DescriptionPreferences: Equatable {
     var style: DescriptionStyle
     var includeCaptureAdvice: Bool
+    var alwaysRunIndependentReview: Bool = false
 
     static func load(defaults: UserDefaults = .standard) -> Self {
         let raw = defaults.string(forKey: "descriptionStyle") ?? DescriptionStyle.medium.rawValue
         return Self(style: DescriptionStyle(rawValue: raw) ?? .medium,
-                    includeCaptureAdvice: defaults.bool(forKey: "includeCaptureAdvice"))
+                    includeCaptureAdvice: defaults.bool(forKey: "includeCaptureAdvice"),
+                    alwaysRunIndependentReview: defaults.bool(forKey: "alwaysRunIndependentReview"))
     }
 }

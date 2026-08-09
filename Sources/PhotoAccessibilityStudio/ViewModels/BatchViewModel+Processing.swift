@@ -5,7 +5,9 @@ extension BatchViewModel {
         guard !isRuntimeInstalling else { return }
         modelHealth = .checking
         Task {
-            if let missing = await runtimeSetupService.inspect() {
+            installedModelNames = await runtimeSetupService.installedModelNames()
+            let modelName = ollamaClient.configuration.modelName
+            if let missing = await runtimeSetupService.inspect(modelName: modelName) {
                 runtimeSetupReason = missing
                 modelHealth = .unavailable(missing)
                 statusMessage = "需要配置：\(missing)。尚未开始下载。"
@@ -13,7 +15,7 @@ extension BatchViewModel {
                 announce(statusMessage)
             } else {
                 modelHealth = .ready
-                statusMessage = "本地 Qwen 3.5 4B、Ollama 与 ExifTool 已就绪。"
+                statusMessage = "本地 \(selectedVisionModel.displayName)、Ollama 与 ExifTool 已就绪。"
             }
         }
     }
@@ -28,7 +30,8 @@ extension BatchViewModel {
         statusMessage = "正在自动下载并配置缺少的本地环境。"
         Task {
             do {
-                try await runtimeSetupService.install { progress in
+                let modelName = ollamaClient.configuration.modelName
+                try await runtimeSetupService.install(modelName: modelName) { progress in
                     Task { @MainActor in
                         self.runtimeProgress = progress
                         self.statusMessage = progress.step
@@ -36,7 +39,8 @@ extension BatchViewModel {
                 }
                 isRuntimeInstalling = false
                 modelHealth = .ready
-                statusMessage = "自动配置完成，本地 Qwen 3.5 4B 已就绪。"
+                installedModelNames = await runtimeSetupService.installedModelNames()
+                statusMessage = "自动配置完成，本地 \(selectedVisionModel.displayName) 已就绪。"
                 announce(statusMessage)
             } catch {
                 isRuntimeInstalling = false
@@ -44,6 +48,50 @@ extension BatchViewModel {
                 statusMessage = "自动配置失败：\(error.localizedDescription)"
                 announce(statusMessage)
             }
+        }
+    }
+
+    func refreshInstalledModels() {
+        Task {
+            installedModelNames = await runtimeSetupService.installedModelNames()
+        }
+    }
+
+    func installOrSelect(_ model: VisionModel) {
+        guard !isRuntimeInstalling else { return }
+        isRuntimeInstalling = true
+        installingModelID = model
+        runtimeProgress = RuntimeProgress(step: "正在检查 \(model.displayName)",
+                                          downloaded: 0,
+                                          total: 0,
+                                          bytesPerSecond: 0)
+        statusMessage = "正在检查本机是否已安装 \(model.displayName)。"
+        Task {
+            do {
+                try await runtimeSetupService.install(modelName: model.ollamaName) { progress in
+                    Task { @MainActor in
+                        self.runtimeProgress = progress
+                        self.statusMessage = progress.step
+                    }
+                }
+                installedModelNames = await runtimeSetupService.installedModelNames()
+                if model.supportsPhotoRecognitionInMacApp {
+                    UserDefaults.standard.set(model.ollamaName, forKey: "selectedVisionModel")
+                    ollamaClient = OllamaClient(configuration: AppConfiguration(modelName: model.ollamaName))
+                    modelHealth = .ready
+                    statusMessage = installedModelNames.contains(model.ollamaName)
+                        ? "\(model.displayName) 已安装、验证并设为当前照片识别模型。"
+                        : "\(model.displayName) 已验证并设为当前照片识别模型。"
+                } else {
+                    statusMessage = "\(model.displayName) 已安装；当前 Ollama 包只标注文本输入，因此未替换照片识别模型。移动端请使用 LiteRT-LM 专用版本。"
+                }
+                announce(statusMessage)
+            } catch {
+                statusMessage = "\(model.displayName) 配置失败：\(error.localizedDescription)"
+                announce(statusMessage)
+            }
+            installingModelID = nil
+            isRuntimeInstalling = false
         }
     }
 
@@ -59,7 +107,9 @@ extension BatchViewModel {
         isProcessing = true
         statusMessage = "正在启动本地识别。"
         processingTask = Task {
-            let ids = jobs.filter { $0.status == .waiting || $0.status == .failed }.map(\.id)
+            let ids = jobs.filter {
+                $0.usesSupportedWritableFormat && ($0.status == .waiting || $0.status == .failed)
+            }.map(\.id)
             startRecognitionProgress(total: ids.count)
             for (offset, id) in ids.enumerated() {
                 guard !Task.isCancelled else { break }
@@ -84,7 +134,8 @@ extension BatchViewModel {
     }
 
     func retrySelected() {
-        guard let id = selectionID, !isProcessing else { return }
+        guard let id = selectionID, !isProcessing,
+              jobs.first(where: { $0.id == id })?.usesSupportedWritableFormat == true else { return }
         update(id: id) {
             $0.status = .waiting
             $0.errorMessage = nil
@@ -132,7 +183,7 @@ extension BatchViewModel {
     private func recognize(id: UUID, position: Int, total: Int) async {
         guard let job = jobs.first(where: { $0.id == id }) else { return }
         update(id: id) { $0.status = .recognizing; $0.errorMessage = nil }
-        statusMessage = "正在识别第 \(position) 张，共 \(total) 张：\(job.displayName)"
+        statusMessage = "正在识别第 \(position) 张，共 \(total) 张。"
         do {
             let preferences = DescriptionPreferences.load()
             let description = try await ollamaClient.describe(
@@ -143,7 +194,7 @@ extension BatchViewModel {
                     guard self.jobs.first(where: { $0.id == id })?.status == .recognizing else {
                         return
                     }
-                    self.statusMessage = "第 \(position) 张，共 \(total) 张：\(stage)；\(job.displayName)"
+                    self.statusMessage = "第 \(position) 张，共 \(total) 张：\(stage)。"
                 }
             }
             update(id: id) {
@@ -177,7 +228,8 @@ extension BatchViewModel {
             guard !Task.isCancelled,
                   let job = jobs.first(where: { $0.id == id }) else { break }
             update(id: id) { $0.status = .writing; $0.errorMessage = nil }
-            statusMessage = "正在写入第 \(offset + 1) 张，共 \(ids.count) 张：\(job.displayName)"
+            let sequence = (jobs.firstIndex(where: { $0.id == id }) ?? offset) + 1
+            statusMessage = "正在写入第 \(sequence) 张照片；本批共 \(ids.count) 张。"
             do {
                 let writer = metadataWriter
                 _ = try await Task.detached {

@@ -11,6 +11,8 @@ struct PhotoAccessibilityStudioApp: App {
             "autoWriteAfterRecognition": false,
             "descriptionStyle": DescriptionStyle.medium.rawValue,
             "includeCaptureAdvice": false,
+            "alwaysRunIndependentReview": false,
+            "selectedVisionModel": VisionModel.qwen35_4B.ollamaName,
             "progressSoundEnabled": true,
             "historyRetentionDays": 30
         ])
@@ -27,6 +29,12 @@ struct PhotoAccessibilityStudioApp: App {
                 .dynamicTypeSize(dynamicTypeSize)
         }
         .commands {
+            CommandGroup(replacing: .appSettings) {
+                SettingsLink {
+                    Text("设置…")
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
             CommandGroup(after: .newItem) {
                 Button("添加照片…") { viewModel.choosePhotos() }
                     .keyboardShortcut("o", modifiers: .command)
@@ -53,6 +61,9 @@ struct PhotoAccessibilityStudioApp: App {
                 Button("实际大小") { textScale = 1 }
                     .keyboardShortcut("0", modifiers: .command)
             }
+        }
+        Settings {
+            SettingsView(viewModel: viewModel)
         }
     }
 

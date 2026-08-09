@@ -25,9 +25,6 @@ struct ContentView: View {
             InspectorView(viewModel: viewModel)
         }
         .toolbar { toolbar }
-        .sheet(isPresented: $viewModel.isSettingsPresented) {
-            SettingsView(viewModel: viewModel)
-        }
         .alert("自动下载并配置本地环境？", isPresented: $viewModel.showRuntimeSetupPrompt) {
             Button("下载并自动配置") { viewModel.acceptRuntimeSetup() }
             Button("暂不下载", role: .cancel) { viewModel.declineRuntimeSetup() }
@@ -147,9 +144,10 @@ struct ContentView: View {
             .disabled(!viewModel.canWrite)
             .accessibilityHint("直接修改已勾选的原始照片；通常建议使用批量导出保留原始素材")
 
-            Button { viewModel.isSettingsPresented = true } label: {
+            SettingsLink {
                 Label("设置", systemImage: "gearshape")
             }
+            .accessibilityHint("打开设置窗口；也可以按 Command-逗号")
         }
     }
 }

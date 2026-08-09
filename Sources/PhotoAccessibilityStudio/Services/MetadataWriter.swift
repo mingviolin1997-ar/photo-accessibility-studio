@@ -100,25 +100,20 @@ struct MetadataWriter {
                 "--", stage.path
             ])
             guard output.status == 0,
-                  !output.standardError.localizedCaseInsensitiveContains("warning"),
-                  !output.standardError.localizedCaseInsensitiveContains("error") else {
+                  !output.standardError.localizedCaseInsensitiveContains("error:") else {
                 throw MetadataWriterError.commandFailed(clean(output.standardError + output.standardOutput))
             }
-            let stagedDescription = try readDescription(from: stage)
-            guard stagedDescription == value else {
-                throw MetadataWriterError.commandFailed("暂存文件字段读回不一致")
-            }
-            try packetBuilder.validateRaw(rawXMP(from: stage))
-            let staged = try integrity.snapshot(of: stage)
-            guard before.pixelWidth == staged.pixelWidth,
-                  before.pixelHeight == staged.pixelHeight,
-                  before.pixelDigest == staged.pixelDigest else {
-                throw MetadataWriterError.integrityChanged
+            if output.standardError.localizedCaseInsensitiveContains("warning") {
+                AppLogger.shared.log("ExifTool 报告非致命警告；继续执行精确字段和像素验证")
             }
             guard Darwin.rename(stage.path, url.path) == 0 else {
                 throw MetadataWriterError.commandFailed(String(cString: strerror(errno)))
             }
             replacedOriginal = true
+            // One final verification is authoritative: it checks exact readback,
+            // the direct-flat raw packet, filename, dimensions, and decoded pixels.
+            // Avoid decoding and hashing the same full-resolution pixels twice on
+            // the staging path, which previously doubled write cost.
             let verified = try verify(value, at: url, expectedIntegrity: before)
             try? FileManager.default.removeItem(at: backup)
             return verified

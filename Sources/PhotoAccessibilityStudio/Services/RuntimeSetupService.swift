@@ -4,7 +4,6 @@ final class RuntimeSetupService {
     typealias ProgressHandler = (RuntimeProgress) -> Void
 
     private let runner = ProcessRunner()
-    private let ollamaClient: OllamaClient
     private var ollamaProcess: Process?
 
     private let ollamaArchive = URL(string:
@@ -16,11 +15,9 @@ final class RuntimeSetupService {
     private let exifBytes: Int64 = 7_916_358
     private let exifSHA = "668ea3acececb7235fbd0f4900e72d5f12c9b07e5c778fd36cb1e9b5828fd65a"
 
-    init(ollamaClient: OllamaClient = .init()) {
-        self.ollamaClient = ollamaClient
-    }
+    init() {}
 
-    func inspect() async -> String? {
+    func inspect(modelName: String = AppConfiguration().modelName) async -> String? {
         var missing: [String] = []
         if RuntimeToolLocator.exifTool() == nil { missing.append("ExifTool 元数据环境") }
 
@@ -31,13 +28,14 @@ final class RuntimeSetupService {
         if !(await serverResponding()) {
             missing.append("Ollama 本地推理环境")
         } else {
-            do { try await ollamaClient.checkHealth() }
-            catch { missing.append("Qwen3.5 4B 模型") }
+            do { try await client(for: modelName).checkHealth() }
+            catch { missing.append("\(modelDisplayName(modelName)) 模型") }
         }
         return missing.isEmpty ? nil : missing.joined(separator: "、")
     }
 
-    func install(progress: @escaping ProgressHandler) async throws {
+    func install(modelName: String = AppConfiguration().modelName,
+                 progress: @escaping ProgressHandler) async throws {
         try FileManager.default.createDirectory(at: RuntimePaths.root,
                                                 withIntermediateDirectories: true)
         if RuntimeToolLocator.exifTool() == nil {
@@ -71,16 +69,25 @@ final class RuntimeSetupService {
             guard await waitForServer() else { throw RuntimeSetupError.serverUnavailable }
         }
 
-        do { try await ollamaClient.checkHealth() }
-        catch { try await pullModel(progress: progress) }
+        do { try await client(for: modelName).checkHealth() }
+        catch { try await pullModel(modelName: modelName, progress: progress) }
 
         guard RuntimeToolLocator.exifTool() != nil else {
             throw RuntimeSetupError.verificationFailed("ExifTool 不可用")
         }
-        do { try await ollamaClient.checkHealth() }
+        do { try await client(for: modelName).checkHealth() }
         catch { throw RuntimeSetupError.verificationFailed(error.localizedDescription) }
-        progress(RuntimeProgress(step: "本地环境与 Qwen3.5 4B 已配置完成",
+        progress(RuntimeProgress(step: "本地环境与 \(modelDisplayName(modelName)) 已配置完成",
                                  downloaded: 1, total: 1, bytesPerSecond: 0))
+    }
+
+    func installedModelNames() async -> Set<String> {
+        if !(await serverResponding()), let executable = RuntimeToolLocator.ollama() {
+            try? startOllama(executable)
+            _ = await waitForServer()
+        }
+        guard await serverResponding() else { return [] }
+        return (try? await client(for: VisionModel.qwen35_4B.ollamaName).installedModelNames()) ?? []
     }
 
     private func installOllama(from archive: URL) throws {
@@ -177,7 +184,8 @@ final class RuntimeSetupService {
         return false
     }
 
-    private func pullModel(progress: @escaping ProgressHandler) async throws {
+    private func pullModel(modelName: String,
+                           progress: @escaping ProgressHandler) async throws {
         struct PullRequest: Encodable { let model: String; let stream = true }
         struct PullStatus: Decodable {
             let status: String?
@@ -190,7 +198,7 @@ final class RuntimeSetupService {
         request.httpMethod = "POST"
         request.timeoutInterval = 12 * 60 * 60
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(PullRequest(model: ollamaClient.configuration.modelName))
+        request.httpBody = try JSONEncoder().encode(PullRequest(model: modelName))
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 300
         configuration.timeoutIntervalForResource = 12 * 60 * 60
@@ -222,11 +230,19 @@ final class RuntimeSetupService {
                 lastBytes = completed
                 lastTime = now
             }
-            progress(RuntimeProgress(step: value.status ?? "正在下载 Qwen3.5 4B 模型",
+            progress(RuntimeProgress(step: value.status ?? "正在下载 \(modelDisplayName(modelName)) 模型",
                                      downloaded: completed,
                                      total: total,
                                      bytesPerSecond: speed))
         }
+    }
+
+    private func client(for modelName: String) -> OllamaClient {
+        OllamaClient(configuration: AppConfiguration(modelName: modelName))
+    }
+
+    private func modelDisplayName(_ modelName: String) -> String {
+        VisionModel.matching(ollamaName: modelName)?.displayName ?? modelName
     }
 
     deinit {

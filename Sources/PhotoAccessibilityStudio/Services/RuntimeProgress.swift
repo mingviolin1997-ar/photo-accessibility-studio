@@ -42,7 +42,7 @@ enum RuntimeSetupError: LocalizedError {
         case let .checksumMismatch(value): return "下载文件校验失败：\(value)"
         case let .archiveInvalid(value): return "自动安装包无效：\(value)"
         case .serverUnavailable: return "Ollama 本地服务无法启动"
-        case let .modelPullFailed(value): return "Qwen 模型下载失败：\(value)"
+        case let .modelPullFailed(value): return "模型下载失败：\(value)"
         case let .verificationFailed(value): return "环境验证失败：\(value)"
         }
     }

@@ -16,8 +16,10 @@ struct InspectorView: View {
                 }
                 .accessibilityElement(children: .combine)
             } else {
-                List(viewModel.resultJobs, selection: $viewModel.selectionID) { job in
+                List(viewModel.numberedResultJobs, selection: $viewModel.selectionID) { item in
+                    let job = item.job
                     ResultPhotoView(
+                        sequence: item.sequence,
                         job: job,
                         description: viewModel.bindingForDescription(id: job.id),
                         isEditorExpanded: editorBinding(for: job.id),
@@ -87,6 +89,7 @@ struct InspectorView: View {
 }
 
 private struct ResultPhotoView: View {
+    let sequence: Int
     let job: PhotoJob
     @Binding var description: String
     @Binding var isEditorExpanded: Bool
@@ -101,9 +104,9 @@ private struct ResultPhotoView: View {
             HStack(alignment: .top, spacing: 16) {
                 preview
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(job.displayName)
+                    Text("第 \(sequence) 张")
                         .font(.headline)
-                        .textSelection(.enabled)
+                        .accessibilityLabel("识别结果第 \(sequence) 张")
                     Text("状态：\(job.status.label)")
                         .foregroundStyle(statusColor)
                     if let style = job.generatedStyle {
@@ -114,6 +117,20 @@ private struct ResultPhotoView: View {
                 }
                 Spacer()
             }
+
+            GroupBox("详细信息") {
+                VStack(alignment: .leading, spacing: 6) {
+                    LabeledContent("拍摄时间", value: job.captureTimeText)
+                    if let format = job.sourceFormat {
+                        LabeledContent("照片格式", value: format)
+                    }
+                    if let dimensions = job.dimensionsText {
+                        LabeledContent("原始尺寸", value: dimensions)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityElement(children: .contain)
 
             HStack {
                 Text("无障碍描述")
@@ -146,7 +163,7 @@ private struct ResultPhotoView: View {
                     .frame(minHeight: 130)
                     .padding(5)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(.separator))
-                    .accessibilityLabel("编辑 \(job.displayName) 的无障碍描述")
+                    .accessibilityLabel("编辑第 \(sequence) 张照片的无障碍描述")
                     .accessibilityHint("修改后需要重新批量导出或写入原始照片，系统才会验证新内容")
             }
 
@@ -184,7 +201,7 @@ private struct ResultPhotoView: View {
                 .background(.quaternary)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .accessibilityLabel(description.isEmpty
-                    ? "照片预览，文件名 \(job.displayName)"
+                    ? "第 \(sequence) 张照片预览"
                     : description)
         }
     }

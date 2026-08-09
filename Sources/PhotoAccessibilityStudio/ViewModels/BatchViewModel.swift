@@ -9,10 +9,16 @@ enum ModelHealth: Equatable {
     var label: String {
         switch self {
         case .checking: return "正在检查本地模型"
-        case .ready: return "Qwen 3.5 4B 已连接"
+        case .ready: return "本地视觉模型已连接"
         case let .unavailable(message): return "模型不可用：\(message)"
         }
     }
+}
+
+struct NumberedPhotoJob: Identifiable {
+    let sequence: Int
+    let job: PhotoJob
+    var id: UUID { job.id }
 }
 
 @MainActor
@@ -26,15 +32,16 @@ final class BatchViewModel: ObservableObject {
     @Published var selectionID: UUID?
     @Published var isProcessing = false
     @Published var statusMessage = "请选择照片开始。所有识别都在本机完成。"
-    @Published var isSettingsPresented = false
     @Published var modelHealth: ModelHealth = .checking
     @Published var showRuntimeSetupPrompt = false
     @Published var runtimeSetupReason = ""
     @Published var runtimeProgress: RuntimeProgress?
     @Published var isRuntimeInstalling = false
     @Published var recognitionProgress: Double?
+    @Published var installedModelNames: Set<String> = []
+    @Published var installingModelID: VisionModel?
 
-    let ollamaClient: OllamaClient
+    var ollamaClient: OllamaClient
     let metadataWriter: MetadataWriter
     let batchExportService: BatchExportService
     let stateStore: StateStore
@@ -57,7 +64,7 @@ final class BatchViewModel: ObservableObject {
             metadataWriter: metadataWriter
         )
         self.stateStore = stateStore
-        self.runtimeSetupService = runtimeSetupService ?? RuntimeSetupService(ollamaClient: ollamaClient)
+        self.runtimeSetupService = runtimeSetupService ?? RuntimeSetupService()
         self.progressSoundPlayer = progressSoundPlayer ?? ProgressSoundPlayer()
         let recoveredJobs = stateStore.load().map { job in
             var recovered = job
@@ -85,6 +92,9 @@ final class BatchViewModel: ObservableObject {
     }
 
     var selectedJob: PhotoJob? { jobs.first { $0.id == selectionID } }
+    var selectedVisionModel: VisionModel {
+        VisionModel.matching(ollamaName: ollamaClient.configuration.modelName) ?? .qwen35_4B
+    }
     var canDeleteSelected: Bool { !isProcessing && selectedJob != nil }
     var historyPhotoCount: Int {
         historyBatches.reduce(0) { $0 + $1.jobs.count }
@@ -92,7 +102,9 @@ final class BatchViewModel: ObservableObject {
 
     var canRecognize: Bool {
         modelHealth == .ready && !isProcessing && !isRuntimeInstalling &&
-        jobs.contains { $0.status == .waiting || $0.status == .failed }
+        jobs.contains {
+            $0.usesSupportedWritableFormat && ($0.status == .waiting || $0.status == .failed)
+        }
     }
 
     var canWrite: Bool {
@@ -110,6 +122,13 @@ final class BatchViewModel: ObservableObject {
 
     var resultJobs: [PhotoJob] {
         jobs.filter { $0.status != .waiting || !$0.description.isEmpty }
+    }
+
+    var numberedResultJobs: [NumberedPhotoJob] {
+        jobs.enumerated().compactMap { offset, job in
+            guard job.status != .waiting || !job.description.isEmpty else { return nil }
+            return NumberedPhotoJob(sequence: offset + 1, job: job)
+        }
     }
 
     var completedCount: Int {

@@ -95,4 +95,42 @@ final class PromptTests: XCTestCase {
         XCTAssertTrue(enabled.contains("不要为了审美建议增加复杂背景"))
         XCTAssertTrue(disabled.contains("advice 字段必须是空字符串"))
     }
+
+    func testGenerationPromptRequiresAdaptiveSelfReviewFields() {
+        let prompt = AccessibilityDescriptionPrompt.chinese(
+            preferences: .init(style: .medium, includeCaptureAdvice: false)
+        )
+        XCTAssertTrue(prompt.contains("\"needsReview\""))
+        XCTAssertTrue(prompt.contains("\"uncertainties\""))
+        XCTAssertTrue(prompt.contains("输出前在内部重新核对一次"))
+    }
+
+    func testRequestedGemmaModelsHaveStableOfficialOllamaTagsAndGuidance() {
+        let requested: [(VisionModel, String)] = [
+            (.gemma4E2B, "gemma4:e2b"),
+            (.gemma4E4B, "gemma4:e4b"),
+            (.gemma3nE2B, "gemma3n:e2b"),
+            (.gemma3nE4B, "gemma3n:e4b")
+        ]
+        for (model, tag) in requested {
+            XCTAssertEqual(model.ollamaName, tag)
+            XCTAssertFalse(model.recommendation.isEmpty)
+            XCTAssertFalse(model.downloadSize.isEmpty)
+        }
+        XCTAssertTrue(VisionModel.gemma4E2B.supportsPhotoRecognitionInMacApp)
+        XCTAssertTrue(VisionModel.gemma4E4B.supportsPhotoRecognitionInMacApp)
+        XCTAssertFalse(VisionModel.gemma3nE2B.supportsPhotoRecognitionInMacApp)
+        XCTAssertFalse(VisionModel.gemma3nE4B.supportsPhotoRecognitionInMacApp)
+    }
+
+    func testAdaptiveReviewIsDefaultAndStrictReviewCanBeEnabled() {
+        let suite = "pas-review-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var preferences = DescriptionPreferences.load(defaults: defaults)
+        XCTAssertFalse(preferences.alwaysRunIndependentReview)
+        defaults.set(true, forKey: "alwaysRunIndependentReview")
+        preferences = DescriptionPreferences.load(defaults: defaults)
+        XCTAssertTrue(preferences.alwaysRunIndependentReview)
+    }
 }
