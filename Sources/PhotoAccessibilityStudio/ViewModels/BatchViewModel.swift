@@ -25,18 +25,25 @@ final class BatchViewModel: ObservableObject {
     @Published var statusMessage = "请选择照片开始。所有识别都在本机完成。"
     @Published var isSettingsPresented = false
     @Published var modelHealth: ModelHealth = .checking
+    @Published var showRuntimeSetupPrompt = false
+    @Published var runtimeSetupReason = ""
+    @Published var runtimeProgress: RuntimeProgress?
+    @Published var isRuntimeInstalling = false
 
     let ollamaClient: OllamaClient
     let metadataWriter: MetadataWriter
     let stateStore: StateStore
+    let runtimeSetupService: RuntimeSetupService
     var processingTask: Task<Void, Never>?
 
     init(ollamaClient: OllamaClient = .init(),
          metadataWriter: MetadataWriter = .init(),
-         stateStore: StateStore = .init()) {
+         stateStore: StateStore = .init(),
+         runtimeSetupService: RuntimeSetupService? = nil) {
         self.ollamaClient = ollamaClient
         self.metadataWriter = metadataWriter
         self.stateStore = stateStore
+        self.runtimeSetupService = runtimeSetupService ?? RuntimeSetupService(ollamaClient: ollamaClient)
         jobs = stateStore.load().map { job in
             var recovered = job
             if recovered.status == .recognizing { recovered.status = .waiting }
@@ -53,7 +60,7 @@ final class BatchViewModel: ObservableObject {
     var selectedJob: PhotoJob? { jobs.first { $0.id == selectionID } }
 
     var canRecognize: Bool {
-        modelHealth == .ready && !isProcessing &&
+        modelHealth == .ready && !isProcessing && !isRuntimeInstalling &&
         jobs.contains { $0.status == .waiting || $0.status == .failed }
     }
 

@@ -2,18 +2,56 @@ import Foundation
 
 extension BatchViewModel {
     func checkModel() {
+        guard !isRuntimeInstalling else { return }
         modelHealth = .checking
         Task {
-            do {
-                try await ollamaClient.checkHealth()
+            if let missing = await runtimeSetupService.inspect() {
+                runtimeSetupReason = missing
+                modelHealth = .unavailable(missing)
+                statusMessage = "需要配置：\(missing)。尚未开始下载。"
+                showRuntimeSetupPrompt = true
+                announce(statusMessage)
+            } else {
                 modelHealth = .ready
-                statusMessage = "本地 Qwen 3.5 4B 已就绪。"
+                statusMessage = "本地 Qwen 3.5 4B、Ollama 与 ExifTool 已就绪。"
+            }
+        }
+    }
+
+    func acceptRuntimeSetup() {
+        guard !isRuntimeInstalling else { return }
+        showRuntimeSetupPrompt = false
+        isRuntimeInstalling = true
+        modelHealth = .checking
+        runtimeProgress = RuntimeProgress(step: "正在准备自动配置",
+                                          downloaded: 0, total: 0, bytesPerSecond: 0)
+        statusMessage = "正在自动下载并配置缺少的本地环境。"
+        Task {
+            do {
+                try await runtimeSetupService.install { progress in
+                    Task { @MainActor in
+                        self.runtimeProgress = progress
+                        self.statusMessage = progress.step
+                    }
+                }
+                isRuntimeInstalling = false
+                modelHealth = .ready
+                statusMessage = "自动配置完成，本地 Qwen 3.5 4B 已就绪。"
+                announce(statusMessage)
             } catch {
+                isRuntimeInstalling = false
                 modelHealth = .unavailable(error.localizedDescription)
-                statusMessage = "本地模型不可用：\(error.localizedDescription)"
+                statusMessage = "自动配置失败：\(error.localizedDescription)"
                 announce(statusMessage)
             }
         }
+    }
+
+    func declineRuntimeSetup() {
+        showRuntimeSetupPrompt = false
+        runtimeProgress = nil
+        statusMessage = "已暂不下载。可随时点击模型状态或在设置中重新配置。"
+        announce(statusMessage)
     }
 
     func startRecognition() {

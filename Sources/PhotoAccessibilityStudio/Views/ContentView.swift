@@ -24,7 +24,13 @@ struct ContentView: View {
         }
         .toolbar { toolbar }
         .sheet(isPresented: $viewModel.isSettingsPresented) {
-            SettingsView()
+            SettingsView(viewModel: viewModel)
+        }
+        .alert("自动下载并配置本地环境？", isPresented: $viewModel.showRuntimeSetupPrompt) {
+            Button("下载并自动配置") { viewModel.acceptRuntimeSetup() }
+            Button("暂不下载", role: .cancel) { viewModel.declineRuntimeSetup() }
+        } message: {
+            Text("检测到缺少：\(viewModel.runtimeSetupReason)。应用只会在您确认后下载 Ollama、ExifTool 或 Qwen3.5 4B 中缺少的部分；下载后自动安装并校验。模型需要数 GB 空间，建议使用稳定网络。")
         }
     }
 
@@ -58,6 +64,22 @@ struct ContentView: View {
 
     private var statusFooter: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let progress = viewModel.runtimeProgress {
+                Text(progress.step)
+                    .font(.callout.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                if let fraction = progress.fraction {
+                    ProgressView(value: fraction)
+                        .accessibilityLabel("环境和模型下载进度")
+                        .accessibilityValue("百分之 \(Int(fraction * 100))")
+                } else {
+                    ProgressView()
+                        .accessibilityLabel("正在准备环境和模型下载")
+                }
+                Text(progress.detail)
+                    .font(.caption.monospacedDigit())
+                    .accessibilityLabel("已处理 \(progress.detail)")
+            }
             ProgressView(value: viewModel.overallProgress)
                 .accessibilityLabel("批处理进度")
                 .accessibilityValue("百分之 \(Int(viewModel.overallProgress * 100))")

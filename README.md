@@ -1,36 +1,57 @@
-# 照片无障碍描述（macOS 测试版）
+# 照片无障碍描述
 
-原生 macOS 批处理工具，调用本机 Ollama 的 `qwen3.5:4b` 为照片生成中文无障碍视觉描述。应用自动构造原始 XMP packet，将描述写入 Apple Preview/iPhone 使用的直接扁平 `XMP-iptcExt:ArtworkContentDescription` 字段，并执行结构、字段、文件名、尺寸与像素完整性检查。
+面向盲人和低视力用户的本地批量照片描述工具。Mac 与 Android 版本都会调用本机 Qwen3.5 4B，为照片生成准确、简洁的中文视觉描述，并将结果写入直接扁平的 XMP-iptcExt:ArtworkContentDescription 字段。
 
-## 当前工作流
+## 轻量安装与首次配置
 
-1. `Command-O` 批量添加照片。
-2. 点击“开始识别”，照片只会发送到 `127.0.0.1` 的 Ollama。
-3. 每张照片默认选中；识别完成后自动写入。可单独取消，也可使用“全选写入”或“全部取消”。
-4. 如需精修，可关闭自动写入，在检查器内编辑后手动批量写入。
-5. 应用逐字读回字段，验证 XMP 为直接扁平结构且没有错误的 `AOContentDescription`，并确认文件名、像素尺寸和解码像素摘要没有改变。
+安装包不内置数 GB 的模型。
 
-已有 Image Description 会单独显示。默认选中的照片会按批处理设置自动写入；取消选择即可跳过。写入前创建临时安全副本；失败时自动恢复。
+- 首次启动只检查本机，不会偷偷下载。
+- 缺少环境或模型时，先弹窗说明下载大小并询问是否自动配置。
+- 同意后显示当前步骤、进度、已下载/总大小和实时速度；拒绝后保持离线，可稍后从模型状态或设置重新尝试。
+- Mac 会按需配置 Ollama、ExifTool 和 qwen3.5:4b，并复用已安装的可用环境。
+- Android 内置 LiteRT-LM 0.15.0 推理运行库，按需断点下载固定版本的 Qwen3.5 4B 多模态模型，完成后核对文件长度和 SHA-256。
 
-## 依赖
+## 批量工作流
 
-- macOS 14 或更高版本，Apple Silicon
-- Ollama 与 `qwen3.5:4b`
-- ExifTool（Homebrew：`brew install exiftool`）
+1. 添加一张、多张照片或整个文件夹。
+2. 选择低、中、高或摄影家描述模式，并决定是否加入下次拍摄建议。
+3. 每张照片默认勾选；开始识别后默认自动写入，无需逐张确认。
+4. 也可全部取消、单独勾选、编辑描述后再批量或单张写入。
+5. 写入后自动验证字段逐字一致、XMP 是直接扁平结构、没有错误的 AOContentDescription，并确认文件名、尺寸和解码像素签名没有变化。验证失败时不报告成功，并尝试恢复原图。
 
-## 开发与测试
+软件不会使用 Apple 预览进行写入或验证。
 
-```bash
-swift test
-zsh scripts/build-app.sh
-```
+## Mac 版
 
-生成的测试版位于 `outputs/照片无障碍描述.app`。
+- macOS 14 或更高版本，Apple Silicon。
+- 本地推理使用 Ollama qwen3.5:4b。
+- ExifTool 仅用于注入应用刻意构造的原始 XMP packet，以及写后回读；不会使用可能生成嵌套字段的普通高层赋值。
 
-## Android 版本
+构建与测试：
 
-Android 测试版在 `android` 分支开发，安装包会发布到 GitHub Releases。Android 端通过局域网调用运行 `qwen3.5:4b` 的 Ollama 服务，并在设备上完成原始扁平 XMP 写入与完整性验证。
+    swift test
+    zsh scripts/build-app.sh
 
-## 隐私与许可
+生成位置：outputs/照片无障碍描述-macOS.zip。
 
-Mac 版只连接本机 Ollama。项目不收集分析数据，不上传照片到第三方服务。源代码使用 [MIT License](LICENSE)。
+## Android 版
+
+Android 代码位于 android 分支和 androidApp/ 目录。
+
+- Android 8.0（API 26）或更高版本，当前测试包面向 64 位 ARM 手机。
+- LiteRT-LM 0.15.0 运行库随 APK 提供，APK 不包含模型。
+- 首次模型下载约 5.26GB，建议预留至少 6GB 空间。
+- 模型固定到 trevon/Qwen3.5-4B-LiteRT 提交 8c81b3a…，并校验 SHA-256 09c025bd…。
+- 当前 Android 测试版只对 JPEG、PNG 执行可验证的原地扁平 XMP 写入；其他格式会明确失败，不会静默改名或转换。
+
+构建与测试：
+
+    cd androidApp
+    ./gradlew testDebugUnitTest assembleDebug
+
+## 隐私、模型与许可
+
+照片只进入设备本地推理引擎。只有用户确认自动配置时，软件才连接 Ollama、GitHub、SourceForge 或 Hugging Face 下载所需公开组件。
+
+项目源代码使用 [MIT License](LICENSE)。第三方运行库、工具和模型保留各自许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
