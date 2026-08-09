@@ -143,7 +143,7 @@ struct SettingsView: View {
            viewModel.selectedVisionModel == model,
            isInstalled(model) { return "当前使用" }
         if isInstalled(model) {
-            return model.supportsPhotoRecognitionInMacApp ? "设为当前模型" : "已下载（移动端备用）"
+            return model.supportsPhotoRecognitionInMacApp ? "设为当前模型" : "已下载（暂不用于照片）"
         }
         return model.supportsPhotoRecognitionInMacApp ? "下载、配置并使用" : "下载并配置"
     }
