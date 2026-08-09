@@ -27,6 +27,7 @@ extension BatchViewModel {
                 announce(statusMessage)
             } else {
                 modelHealth = .ready
+                UserDefaults.standard.removeObject(forKey: "pendingVisionModelID")
                 statusMessage = "本地 \(selectedVisionModel.displayName)、\(selectedInferenceEngine.displayName) 与 ExifTool 已就绪。"
             }
         }
@@ -57,7 +58,8 @@ extension BatchViewModel {
         runtimeProgress = RuntimeProgress(step: "正在准备自动配置",
                                           downloaded: 0, total: 0, bytesPerSecond: 0)
         statusMessage = "正在自动下载并配置缺少的本地环境。"
-        Task {
+        runtimeInstallTask?.cancel()
+        runtimeInstallTask = Task {
             do {
                 switch selectedInferenceEngine {
                 case .mlx:
@@ -78,14 +80,32 @@ extension BatchViewModel {
                 isRuntimeInstalling = false
                 modelHealth = .ready
                 installedModelNames = await installedModelsForCurrentEngine()
+                UserDefaults.standard.removeObject(forKey: "pendingVisionModelID")
                 statusMessage = "自动配置完成，本地 \(selectedVisionModel.displayName) 与 \(selectedInferenceEngine.displayName) 已就绪。"
+                announce(statusMessage)
+            } catch is CancellationError {
+                isRuntimeInstalling = false
+                modelHealth = .unavailable("下载已取消，可从已有进度继续")
+                runtimeProgress = RuntimeProgress(step: "下载已取消",
+                                                  downloaded: runtimeProgress?.downloaded ?? 0,
+                                                  total: runtimeProgress?.total ?? 0,
+                                                  bytesPerSecond: 0,
+                                                  detailOverride: "已下载文件已保留；点击当前模型即可断点续传")
+                statusMessage = "已取消自动配置；现有下载进度已保留，可随时重试。"
                 announce(statusMessage)
             } catch {
                 isRuntimeInstalling = false
                 modelHealth = .unavailable(error.localizedDescription)
                 statusMessage = "自动配置失败：\(error.localizedDescription)"
+                runtimeProgress = RuntimeProgress(step: "自动配置失败",
+                                                  downloaded: runtimeProgress?.downloaded ?? 0,
+                                                  total: runtimeProgress?.total ?? 0,
+                                                  bytesPerSecond: 0,
+                                                  detailOverride: error.localizedDescription)
+                AppLogger.shared.error(statusMessage)
                 announce(statusMessage)
             }
+            runtimeInstallTask = nil
         }
     }
 
@@ -97,6 +117,15 @@ extension BatchViewModel {
 
     func installOrSelect(_ model: VisionModel) {
         guard !isRuntimeInstalling else { return }
+        UserDefaults.standard.set(model.rawValue, forKey: "pendingVisionModelID")
+        if model.supportsPhotoRecognition(on: selectedInferenceEngine) {
+            UserDefaults.standard.set(model.rawValue, forKey: "selectedVisionModelID")
+            UserDefaults.standard.set(model.identifier(for: selectedInferenceEngine),
+                                      forKey: "selectedVisionModel")
+            selectedVisionModel = model
+            localVisionClient = LocalVisionClient(engine: selectedInferenceEngine,
+                                                  model: model)
+        }
         isRuntimeInstalling = true
         installingModelID = model
         runtimeProgress = RuntimeProgress(step: "正在检查 \(model.displayName)",
@@ -104,7 +133,8 @@ extension BatchViewModel {
                                           total: 0,
                                           bytesPerSecond: 0)
         statusMessage = "正在检查本机是否已安装 \(model.displayName)。"
-        Task {
+        runtimeInstallTask?.cancel()
+        runtimeInstallTask = Task {
             do {
                 switch selectedInferenceEngine {
                 case .mlx:
@@ -124,25 +154,44 @@ extension BatchViewModel {
                 }
                 installedModelNames = await installedModelsForCurrentEngine()
                 if model.supportsPhotoRecognition(on: selectedInferenceEngine) {
-                    UserDefaults.standard.set(model.rawValue, forKey: "selectedVisionModelID")
-                    UserDefaults.standard.set(model.identifier(for: selectedInferenceEngine),
-                                              forKey: "selectedVisionModel")
-                    selectedVisionModel = model
-                    localVisionClient = LocalVisionClient(engine: selectedInferenceEngine,
-                                                          model: model)
+                    UserDefaults.standard.removeObject(forKey: "pendingVisionModelID")
                     modelHealth = .ready
                     statusMessage = "\(model.displayName) 已安装、验证并设为 \(selectedInferenceEngine.displayName) 当前照片识别模型。"
                 } else {
+                    UserDefaults.standard.removeObject(forKey: "pendingVisionModelID")
                     statusMessage = "\(model.displayName) 已安装；当前 Ollama 包只标注文本输入，因此未替换照片识别模型。移动端请使用 LiteRT-LM 专用版本。"
                 }
                 announce(statusMessage)
+            } catch is CancellationError {
+                modelHealth = .unavailable("下载已取消，可断点续传")
+                runtimeProgress = RuntimeProgress(step: "已取消 \(model.displayName) 下载",
+                                                  downloaded: runtimeProgress?.downloaded ?? 0,
+                                                  total: runtimeProgress?.total ?? 0,
+                                                  bytesPerSecond: 0,
+                                                  detailOverride: "已有文件已保留；再次点击该模型即可继续")
+                statusMessage = "已取消 \(model.displayName) 下载；已有进度已保留。"
+                announce(statusMessage)
             } catch {
                 statusMessage = "\(model.displayName) 配置失败：\(error.localizedDescription)"
+                modelHealth = .unavailable(error.localizedDescription)
+                runtimeProgress = RuntimeProgress(step: "\(model.displayName) 配置失败",
+                                                  downloaded: runtimeProgress?.downloaded ?? 0,
+                                                  total: runtimeProgress?.total ?? 0,
+                                                  bytesPerSecond: 0,
+                                                  detailOverride: error.localizedDescription)
+                AppLogger.shared.error(statusMessage)
                 announce(statusMessage)
             }
             installingModelID = nil
             isRuntimeInstalling = false
+            runtimeInstallTask = nil
         }
+    }
+
+    func cancelRuntimeInstallation() {
+        guard isRuntimeInstalling else { return }
+        statusMessage = "正在安全停止下载；已完成的数据会保留。"
+        runtimeInstallTask?.cancel()
     }
 
     func declineRuntimeSetup() {

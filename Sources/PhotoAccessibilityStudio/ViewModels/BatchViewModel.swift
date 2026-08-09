@@ -52,6 +52,7 @@ final class BatchViewModel: ObservableObject {
     let mlxRuntimeSetupService: MLXRuntimeSetupService
     let progressSoundPlayer: ProgressSoundPlayer
     var processingTask: Task<Void, Never>?
+    var runtimeInstallTask: Task<Void, Never>?
     var recognitionProgressTask: Task<Void, Never>?
     var recognitionCompletedUnits = 0
     var recognitionTotalUnits = 0
@@ -62,9 +63,19 @@ final class BatchViewModel: ObservableObject {
          mlxRuntimeSetupService: MLXRuntimeSetupService? = nil,
          batchExportService: BatchExportService? = nil,
          progressSoundPlayer: ProgressSoundPlayer? = nil) {
-        let storedEngine = InferenceEngine.stored()
+        let defaults = UserDefaults.standard
+        let storedEngine = InferenceEngine.stored(defaults: defaults)
         let engine = storedEngine ?? .mlx
-        let model = VisionModel.stored()
+        let pendingModel = defaults.string(forKey: "pendingVisionModelID")
+            .flatMap(VisionModel.matching(identifier:))
+        let recoveredIncompleteModel = engine == .mlx
+            ? MLXRuntimeSetupService.mostRecentIncompleteModel() : nil
+        let model = pendingModel ?? recoveredIncompleteModel ?? VisionModel.stored(defaults: defaults)
+        if pendingModel != nil || recoveredIncompleteModel != nil {
+            defaults.set(model.rawValue, forKey: "pendingVisionModelID")
+            defaults.set(model.rawValue, forKey: "selectedVisionModelID")
+            defaults.set(model.identifier(for: engine), forKey: "selectedVisionModel")
+        }
         self.selectedInferenceEngine = engine
         self.selectedVisionModel = model
         self.localVisionClient = LocalVisionClient(engine: engine, model: model)

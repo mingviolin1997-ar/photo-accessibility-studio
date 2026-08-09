@@ -122,6 +122,21 @@ enum VisionModel: String, CaseIterable, Identifiable {
         }
     }
 
+    var platformCompatibility: String {
+        switch self {
+        case .qwen35_4B:
+            return "平台：macOS 支持 MLX 与 Ollama；Android 支持 LiteRT-LM；Windows 当前没有本软件版本，可在其他工具中使用兼容的 Ollama 模型。"
+        case .gemma4E2B:
+            return "平台：macOS 支持 MLX 与 Ollama；Android 支持 LiteRT-LM，适合 8 GB 内存设备；Windows 当前没有本软件版本。"
+        case .gemma4E4B:
+            return "平台：macOS 支持 MLX 与 Ollama，建议 24 GB 内存；Android 支持 LiteRT-LM，建议 12 GB 内存旗舰设备；Windows 当前没有本软件版本。"
+        case .gemma3nE2B:
+            return "平台：macOS 的 MLX 支持照片，Ollama 包暂不用于照片；Android 支持 LiteRT-LM；Windows 当前没有本软件版本。"
+        case .gemma3nE4B:
+            return "平台：macOS 的 MLX 支持照片，建议 24 GB 内存；Android 支持 LiteRT-LM，建议 12 GB 内存；Windows 当前没有本软件版本。"
+        }
+    }
+
     static func matching(ollamaName: String) -> VisionModel? {
         allCases.first { $0.ollamaName == ollamaName }
     }

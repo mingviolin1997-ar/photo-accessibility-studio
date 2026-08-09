@@ -130,6 +130,9 @@ final class PromptTests: XCTestCase {
             XCTAssertTrue(model.supportsPhotoRecognition(on: .mlx))
             XCTAssertFalse(model.downloadSize(for: .mlx).isEmpty)
             XCTAssertFalse(model.recommendation(for: .mlx).isEmpty)
+            XCTAssertTrue(model.platformCompatibility.contains("macOS"))
+            XCTAssertTrue(model.platformCompatibility.contains("Android"))
+            XCTAssertTrue(model.platformCompatibility.contains("Windows"))
         }
         XCTAssertFalse(VisionModel.gemma3nE2B.supportsPhotoRecognition(on: .ollama))
         XCTAssertFalse(VisionModel.gemma3nE4B.supportsPhotoRecognition(on: .ollama))

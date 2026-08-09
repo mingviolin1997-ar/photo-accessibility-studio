@@ -195,6 +195,41 @@ final class RuntimeSetupService {
 
     private func pullModel(modelName: String,
                            progress: @escaping ProgressHandler) async throws {
+        var lastError: Error = RuntimeSetupError.modelPullFailed("未知错误")
+        for attempt in 1...3 {
+            progress(RuntimeProgress(
+                step: "正在连接 Ollama 模型下载服务",
+                downloaded: 0,
+                total: 0,
+                bytesPerSecond: 0,
+                detailOverride: "第 \(attempt) 次连接；连续 60 秒无数据会自动重试"
+            ))
+            do {
+                try await pullModelOnce(modelName: modelName, progress: progress)
+                return
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+                if attempt < 3 {
+                    progress(RuntimeProgress(
+                        step: "Ollama 下载中断，准备自动重试",
+                        downloaded: 0,
+                        total: 0,
+                        bytesPerSecond: 0,
+                        detailOverride: "\(downloadFailureReason(error))；2 秒后进行第 \(attempt + 1) 次连接"
+                    ))
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                }
+            }
+        }
+        throw RuntimeSetupError.modelPullFailed(
+            "\(downloadFailureReason(lastError))；已尝试 3 次，Ollama 会保留可续传的模型分层"
+        )
+    }
+
+    private func pullModelOnce(modelName: String,
+                               progress: @escaping ProgressHandler) async throws {
         struct PullRequest: Encodable { let model: String; let stream = true }
         struct PullStatus: Decodable {
             let status: String?
@@ -209,7 +244,7 @@ final class RuntimeSetupService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(PullRequest(model: modelName))
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 300
+        configuration.timeoutIntervalForRequest = 60
         configuration.timeoutIntervalForResource = 12 * 60 * 60
         let session = URLSession(configuration: configuration)
         let (bytes, response) = try await session.bytes(for: request)
@@ -244,6 +279,18 @@ final class RuntimeSetupService {
                                      total: total,
                                      bytesPerSecond: speed))
         }
+    }
+
+    private func downloadFailureReason(_ error: Error) -> String {
+        let value = error.localizedDescription
+        let lower = value.lowercased()
+        if lower.contains("timed out") || lower.contains("timeout") {
+            return "连续 60 秒没有收到模型数据，连接超时"
+        }
+        if lower.contains("offline") || lower.contains("connect") || lower.contains("network") {
+            return "无法连接模型下载服务；请检查网络、代理和 Ollama 状态"
+        }
+        return value
     }
 
     private func client(for modelName: String) -> OllamaClient {

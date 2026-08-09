@@ -30,8 +30,6 @@ final class MLXRuntimeSetupService {
         }
         if !isModelInstalled(model) {
             missing.append("\(model.displayName) 的 MLX 模型")
-        } else {
-            try? adoptCurrentRevisionIfNeeded(model)
         }
         guard missing.isEmpty else { return missing.joined(separator: "、") }
         do {
@@ -56,8 +54,6 @@ final class MLXRuntimeSetupService {
         try await installEnvironmentIfNeeded(progress: progress)
         if !isModelInstalled(model) {
             try await downloadModel(model, progress: progress)
-        } else {
-            try adoptCurrentRevisionIfNeeded(model)
         }
         guard environmentReady else {
             throw RuntimeSetupError.verificationFailed("MLX-VLM 环境不可执行")
@@ -90,8 +86,41 @@ final class MLXRuntimeSetupService {
         let marker = RuntimePaths.mlxModelRevisionMarker(for: model.mlxName)
         guard let revision = try? String(contentsOf: marker, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines) else {
-            return true
+            return false
         }
+        return revision == model.mlxRevision
+    }
+
+    static func mostRecentIncompleteModel() -> VisionModel? {
+        VisionModel.allCases
+            .compactMap { model -> (VisionModel, Date)? in
+                let directory = RuntimePaths.mlxModelDirectory(for: model.mlxName)
+                guard FileManager.default.fileExists(atPath: directory.path),
+                      directoryContainsDownloadedData(directory),
+                      !revisionMarkerMatches(model) else { return nil }
+                let values = try? directory.resourceValues(forKeys: [.contentModificationDateKey])
+                return (model, values?.contentModificationDate ?? .distantPast)
+            }
+            .max(by: { $0.1 < $1.1 })?.0
+    }
+
+    private static func directoryContainsDownloadedData(_ directory: URL) -> Bool {
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else { return false }
+        while let file = enumerator.nextObject() as? URL {
+            let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            if values?.isRegularFile == true, (values?.fileSize ?? 0) > 0 { return true }
+        }
+        return false
+    }
+
+    private static func revisionMarkerMatches(_ model: VisionModel) -> Bool {
+        let marker = RuntimePaths.mlxModelRevisionMarker(for: model.mlxName)
+        let revision = try? String(contentsOf: marker, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return revision == model.mlxRevision
     }
 
@@ -225,9 +254,22 @@ final class MLXRuntimeSetupService {
             parsesJSONProgress: true
         )
         guard output.status == 0 else {
-            throw RuntimeSetupError.modelPullFailed(output.standardOutput)
+            throw RuntimeSetupError.modelPullFailed(Self.downloadFailure(from: output.standardOutput))
         }
         try Data(model.mlxRevision.utf8).write(to: marker, options: .atomic)
+    }
+
+    private static func downloadFailure(from output: String) -> String {
+        for line in output.split(separator: "\n").reversed() {
+            guard let data = String(line).data(using: .utf8),
+                  let event = try? JSONDecoder().decode(DownloadEvent.self, from: data),
+                  let error = event.error, !error.isEmpty else { continue }
+            return error
+        }
+        let lines = output.split(separator: "\n")
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return lines.suffix(3).joined(separator: "；").prefix(600).description
     }
 
     private func runInBackground(executable: URL,
@@ -237,17 +279,18 @@ final class MLXRuntimeSetupService {
                                  step: String,
                                  parsesJSONProgress: Bool = false) async throws -> ProcessOutput {
         let runner = streamingRunner
-        return try await Task.detached(priority: .utility) {
+        let task = Task.detached(priority: .utility) {
             try runner.run(executable: executable,
                            arguments: arguments,
                            environment: environment) { line in
                 if parsesJSONProgress,
                    let data = line.data(using: .utf8),
                    let event = try? JSONDecoder().decode(DownloadEvent.self, from: data) {
-                    progress(RuntimeProgress(step: event.step,
+                    progress(RuntimeProgress(step: event.error == nil ? event.step : "下载失败",
                                              downloaded: event.downloaded,
                                              total: event.total,
-                                             bytesPerSecond: event.speed))
+                                             bytesPerSecond: event.speed,
+                                             detailOverride: event.error ?? event.detail))
                 } else if !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     progress(RuntimeProgress(step: step,
                                              downloaded: 0,
@@ -256,7 +299,12 @@ final class MLXRuntimeSetupService {
                                              detailOverride: String(line.prefix(160))))
                 }
             }
-        }.value
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     private struct DownloadEvent: Decodable {
@@ -264,6 +312,8 @@ final class MLXRuntimeSetupService {
         let downloaded: Int64
         let total: Int64
         let speed: Double
+        let detail: String?
+        let error: String?
     }
 
     private var processEnvironment: [String: String] {
@@ -276,6 +326,8 @@ final class MLXRuntimeSetupService {
         environment["HF_HUB_CACHE"] = RuntimePaths.mlxCache.appendingPathComponent("huggingface/hub").path
         environment["HF_XET_CACHE"] = RuntimePaths.mlxCache.appendingPathComponent("huggingface/xet").path
         environment["HF_HUB_DISABLE_XET"] = "1"
+        environment["HF_HUB_ETAG_TIMEOUT"] = "30"
+        environment["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"
         environment["PYTHONUNBUFFERED"] = "1"
         return environment
     }
@@ -335,18 +387,13 @@ final class MLXRuntimeSetupService {
         return nil
     }
 
-    private func adoptCurrentRevisionIfNeeded(_ model: VisionModel) throws {
-        let marker = RuntimePaths.mlxModelRevisionMarker(for: model.mlxName)
-        guard !FileManager.default.fileExists(atPath: marker.path) else { return }
-        try Data(model.mlxRevision.utf8).write(to: marker, options: .atomic)
-    }
-
     deinit { stopServer() }
 
     private static let modelDownloaderScript = #"""
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from huggingface_hub import HfApi, hf_hub_download
@@ -357,47 +404,136 @@ revision = sys.argv[2]
 local_dir = Path(sys.argv[3])
 force_download = sys.argv[4] == "1"
 local_dir.mkdir(parents=True, exist_ok=True)
-info = HfApi().model_info(repo_id, revision=revision, files_metadata=True)
-files = [s for s in info.siblings if s.rfilename not in {".gitattributes"} and not s.rfilename.lower().endswith((".md", ".png", ".jpg", ".jpeg"))]
-sizes = {s.rfilename: int(s.size or 0) for s in files}
-total = sum(sizes.values())
-completed = 0
-started = time.monotonic()
 
-def emit(filename, current):
-    elapsed = max(time.monotonic() - started, 0.001)
-    speed = max(current - completed_at_start, 0) / elapsed
-    print(json.dumps({"step": "正在下载 MLX 模型：" + filename, "downloaded": current, "total": total, "speed": speed}, ensure_ascii=False), flush=True)
+state_lock = threading.Lock()
+stop_monitor = threading.Event()
+state = {
+    "active": False,
+    "filename": "正在读取模型文件列表",
+    "downloaded": 0,
+    "total": 0,
+    "speed": 0.0,
+    "last_change": time.monotonic(),
+}
 
-for sibling in files:
-    target = local_dir / sibling.rfilename
-    expected = sizes[sibling.rfilename]
-    if not force_download and target.is_file() and (expected == 0 or target.stat().st_size == expected):
-        completed += expected
+def emit(step, downloaded=0, total=0, speed=0.0, detail=None, error=None):
+    print(json.dumps({
+        "step": step,
+        "downloaded": int(downloaded),
+        "total": int(total),
+        "speed": float(max(speed, 0.0)),
+        "detail": detail,
+        "error": error,
+    }, ensure_ascii=False), flush=True)
 
-completed_at_start = completed
-emit("检查已有文件", completed)
+def friendly_error(error):
+    text = str(error).strip() or error.__class__.__name__
+    lower = text.lower()
+    if "401" in lower or "403" in lower or "unauthorized" in lower or "forbidden" in lower:
+        return "模型仓库拒绝访问；请检查网络、模型许可和 Hugging Face 登录权限。原有进度已保留，可重试。"
+    if "timed out" in lower or "timeout" in lower:
+        return "连接模型服务器超时；请检查网络或代理后重试。原有进度已保留。"
+    if "no space" in lower or "disk" in lower and "full" in lower:
+        return "磁盘空间不足；请释放空间后重试。原有进度已保留。"
+    if "name resolution" in lower or "cannot connect" in lower or "network" in lower:
+        return "无法连接模型服务器；请检查网络、DNS 或代理后重试。原有进度已保留。"
+    return "下载模型文件失败：" + text[:360] + "。原有进度已保留，可重试。"
 
-for sibling in files:
-    filename = sibling.rfilename
-    expected = sizes[filename]
-    target = local_dir / filename
-    if not force_download and target.is_file() and (expected == 0 or target.stat().st_size == expected):
-        continue
-    base = completed
-    class Reporter(tqdm):
-        def __init__(self, *args, **kwargs):
-            kwargs["disable"] = True
-            super().__init__(*args, **kwargs)
-        def update(self, n=1):
-            value = super().update(n)
-            emit(filename, min(total, base + int(self.n)))
-            return value
-    hf_hub_download(repo_id=repo_id, revision=revision, filename=filename, local_dir=str(local_dir), tqdm_class=Reporter, force_download=force_download)
-    actual = target.stat().st_size if target.is_file() else expected
-    completed = min(total, base + (expected or actual))
-    emit(filename, completed)
+def monitor():
+    while not stop_monitor.wait(5):
+        with state_lock:
+            snapshot = dict(state)
+        if not snapshot["active"]:
+            continue
+        idle = int(time.monotonic() - snapshot["last_change"])
+        if idle >= 180:
+            emit("下载已停止响应",
+                 snapshot["downloaded"], snapshot["total"], 0,
+                 error="连续 3 分钟没有收到任何模型数据，下载已停止。请检查网络、代理或防火墙后点击重试；已下载文件会保留并用于断点续传。")
+            os._exit(70)
+        detail = "正在连接模型文件服务器"
+        if idle >= 15:
+            detail = "连续 %d 秒未收到新数据，仍在等待；超过 3 分钟会自动停止并报告失败" % idle
+        emit("正在下载 MLX 模型：" + snapshot["filename"],
+             snapshot["downloaded"], snapshot["total"], snapshot["speed"], detail=detail)
 
-emit("模型下载完成", total)
+threading.Thread(target=monitor, daemon=True).start()
+
+try:
+    emit("正在读取模型文件列表", detail="正在连接 Hugging Face 并核对固定模型版本")
+    info = HfApi().model_info(repo_id, revision=revision, files_metadata=True)
+    files = [s for s in info.siblings if s.rfilename not in {".gitattributes"} and not s.rfilename.lower().endswith((".md", ".png", ".jpg", ".jpeg"))]
+    sizes = {s.rfilename: int(s.size or 0) for s in files}
+    total = sum(sizes.values())
+    completed = 0
+    for sibling in files:
+        target = local_dir / sibling.rfilename
+        expected = sizes[sibling.rfilename]
+        if not force_download and target.is_file() and (expected == 0 or target.stat().st_size == expected):
+            completed += expected
+
+    completed_at_start = completed
+    started = time.monotonic()
+    emit("正在核对已有模型文件", completed, total, detail="已完成的文件会跳过，未完成文件将断点续传")
+
+    for sibling in files:
+        filename = sibling.rfilename
+        expected = sizes[filename]
+        target = local_dir / filename
+        if not force_download and target.is_file() and (expected == 0 or target.stat().st_size == expected):
+            continue
+        base = completed
+
+        class Reporter(tqdm):
+            def __init__(self, *args, **kwargs):
+                kwargs["disable"] = True
+                super().__init__(*args, **kwargs)
+            def update(self, n=1):
+                value = super().update(n)
+                current = min(total, base + int(self.n))
+                elapsed = max(time.monotonic() - started, 0.001)
+                speed = max(current - completed_at_start, 0) / elapsed
+                with state_lock:
+                    if current > state["downloaded"]:
+                        state["last_change"] = time.monotonic()
+                    state.update(filename=filename, downloaded=current, total=total, speed=speed)
+                emit("正在下载 MLX 模型：" + filename, current, total, speed)
+                return value
+
+        with state_lock:
+            state.update(active=True, filename=filename, downloaded=base, total=total,
+                         speed=0.0, last_change=time.monotonic())
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                hf_hub_download(repo_id=repo_id, revision=revision, filename=filename,
+                                local_dir=str(local_dir), tqdm_class=Reporter,
+                                force_download=force_download)
+                last_error = None
+                break
+            except Exception as error:
+                last_error = error
+                if attempt < 3:
+                    emit("模型下载连接中断，准备重试", base, total, 0,
+                         detail="第 %d 次失败：%s；%d 秒后自动重试，已有进度保留" % (attempt, str(error)[:180], attempt * 2))
+                    time.sleep(attempt * 2)
+        if last_error is not None:
+            raise last_error
+        with state_lock:
+            state["active"] = False
+        actual = target.stat().st_size if target.is_file() else expected
+        completed = min(total, base + (expected or actual))
+        emit("已完成模型文件：" + filename, completed, total)
+
+    emit("模型下载完成", total, total, detail="所有文件已下载，正在写入版本标记并验证")
+except Exception as error:
+    with state_lock:
+        snapshot = dict(state)
+        state["active"] = False
+    emit("下载失败", snapshot["downloaded"], snapshot["total"], 0,
+         error=friendly_error(error))
+    sys.exit(1)
+finally:
+    stop_monitor.set()
 """#
 }

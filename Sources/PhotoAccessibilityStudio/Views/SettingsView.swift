@@ -69,6 +69,10 @@ struct SettingsView: View {
                         Text(model.recommendation(for: viewModel.selectedInferenceEngine))
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                        Text(model.platformCompatibility)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel(model.platformCompatibility)
                         Button(modelButtonTitle(model)) {
                             viewModel.installOrSelect(model)
                         }
@@ -81,8 +85,7 @@ struct SettingsView: View {
                     .accessibilityElement(children: .contain)
                 }
 
-                if let progress = viewModel.runtimeProgress,
-                   viewModel.isRuntimeInstalling {
+                if let progress = viewModel.runtimeProgress {
                     Text(progress.step)
                         .font(.callout.weight(.semibold))
                     if let fraction = progress.fraction {
@@ -95,6 +98,14 @@ struct SettingsView: View {
                     }
                     Text(progress.detail)
                         .font(.caption.monospacedDigit())
+                        .accessibilityLabel("下载状态：\(progress.detail)")
+                }
+
+                if viewModel.isRuntimeInstalling {
+                    Button("取消当前下载", role: .cancel) {
+                        viewModel.cancelRuntimeInstallation()
+                    }
+                    .accessibilityHint("安全停止下载；已经完成的数据会保留，之后可以断点续传")
                 }
             }
             Section("描述方式") {

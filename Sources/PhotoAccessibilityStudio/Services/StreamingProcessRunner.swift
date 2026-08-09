@@ -21,6 +21,11 @@ struct StreamingProcessRunner {
         var pending = Data()
         var captured = Data()
         while true {
+            if Task.isCancelled {
+                if process.isRunning { process.terminate() }
+                process.waitUntilExit()
+                throw CancellationError()
+            }
             let chunk = pipe.fileHandleForReading.availableData
             if chunk.isEmpty { break }
             if captured.count < 512_000 { captured.append(chunk) }
@@ -34,6 +39,7 @@ struct StreamingProcessRunner {
             }
         }
         process.waitUntilExit()
+        if Task.isCancelled { throw CancellationError() }
         if !pending.isEmpty,
            let line = String(data: pending, encoding: .utf8), !line.isEmpty {
             onLine?(line)
