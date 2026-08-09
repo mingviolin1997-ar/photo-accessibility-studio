@@ -60,10 +60,14 @@ extension BatchViewModel {
         statusMessage = "正在启动本地识别。"
         processingTask = Task {
             let ids = jobs.filter { $0.status == .waiting || $0.status == .failed }.map(\.id)
+            startRecognitionProgress(total: ids.count)
             for (offset, id) in ids.enumerated() {
                 guard !Task.isCancelled else { break }
                 await recognize(id: id, position: offset + 1, total: ids.count)
+                markRecognitionUnitCompleted(offset + 1)
             }
+            let recognitionWasCancelled = Task.isCancelled
+            finishRecognitionProgress(completed: !recognitionWasCancelled)
             if !Task.isCancelled && UserDefaults.standard.bool(forKey: "autoWriteAfterRecognition") {
                 let writeIDs = jobs.filter {
                     $0.status == .ready && $0.isApproved && !$0.description.isEmpty
@@ -71,33 +75,41 @@ extension BatchViewModel {
                 await performWriting(ids: writeIDs)
             }
             isProcessing = false
+            processingTask = nil
             statusMessage = Task.isCancelled
                 ? "已停止处理。"
-                : "批处理完成。已写入并验证 \(completedCount) 张，待手动写入 \(readyCount) 张。"
+                : "识别与自动校对完成。已写入并验证 \(completedCount) 张，待导出或写入 \(readyCount) 张。"
             announce(statusMessage)
         }
     }
 
     func retrySelected() {
         guard let id = selectionID, !isProcessing else { return }
-        update(id: id) { $0.status = .waiting; $0.errorMessage = nil }
+        update(id: id) {
+            $0.status = .waiting
+            $0.errorMessage = nil
+            $0.exportedURL = nil
+        }
         startRecognition()
     }
 
     func cancelProcessing() {
         processingTask?.cancel()
         processingTask = nil
+        recognitionProgressTask?.cancel()
+        recognitionProgressTask = nil
+        progressSoundPlayer.stop()
     }
 
     func selectAllForWriting() {
         for index in jobs.indices { jobs[index].isApproved = true }
-        statusMessage = "已选择全部 \(jobs.count) 张照片用于写入。"
+        statusMessage = "已选择全部 \(jobs.count) 张照片用于批量导出或写入。"
         announce(statusMessage)
     }
 
     func deselectAllForWriting() {
         for index in jobs.indices { jobs[index].isApproved = false }
-        statusMessage = "已取消选择全部照片；自动写入会跳过这些照片。"
+        statusMessage = "已取消选择全部照片；批量导出和写入会跳过这些照片。"
         announce(statusMessage)
     }
 
@@ -123,12 +135,23 @@ extension BatchViewModel {
         statusMessage = "正在识别第 \(position) 张，共 \(total) 张：\(job.displayName)"
         do {
             let preferences = DescriptionPreferences.load()
-            let description = try await ollamaClient.describe(job.url, preferences: preferences)
+            let description = try await ollamaClient.describe(
+                job.url,
+                preferences: preferences
+            ) { stage in
+                Task { @MainActor in
+                    guard self.jobs.first(where: { $0.id == id })?.status == .recognizing else {
+                        return
+                    }
+                    self.statusMessage = "第 \(position) 张，共 \(total) 张：\(stage)；\(job.displayName)"
+                }
+            }
             update(id: id) {
                 $0.description = description
                 $0.generatedStyle = preferences.style
                 $0.includedCaptureAdvice = preferences.includeCaptureAdvice
                 $0.status = .ready
+                $0.exportedURL = nil
             }
         } catch {
             update(id: id) { $0.status = .failed; $0.errorMessage = error.localizedDescription }
@@ -160,11 +183,58 @@ extension BatchViewModel {
                 _ = try await Task.detached {
                     try writer.write(job.description, to: job.url)
                 }.value
-                update(id: id) { $0.status = .completed; $0.existingDescription = $0.description }
+                update(id: id) {
+                    $0.status = .completed
+                    $0.existingDescription = $0.description
+                    $0.exportedURL = nil
+                }
             } catch {
                 update(id: id) { $0.status = .failed; $0.errorMessage = error.localizedDescription }
                 AppLogger.shared.error("写入失败 \(job.displayName)：\(error.localizedDescription)")
             }
+        }
+    }
+
+    private func startRecognitionProgress(total: Int) {
+        recognitionProgressTask?.cancel()
+        recognitionCompletedUnits = 0
+        recognitionTotalUnits = max(total, 1)
+        recognitionProgress = 0
+        let soundEnabled = UserDefaults.standard.object(forKey: "progressSoundEnabled") as? Bool ?? true
+        progressSoundPlayer.start(enabled: soundEnabled)
+        recognitionProgressTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled, let self,
+                      let current = self.recognitionProgress else { break }
+                let nextUnit = min(self.recognitionCompletedUnits + 1,
+                                   self.recognitionTotalUnits)
+                let ceiling = min(Double(nextUnit) / Double(self.recognitionTotalUnits), 0.98)
+                guard current < ceiling else { continue }
+                let next = min(ceiling, current + max(0.006, (ceiling - current) * 0.12))
+                self.recognitionProgress = next
+                self.progressSoundPlayer.update(progress: next)
+            }
+        }
+    }
+
+    private func markRecognitionUnitCompleted(_ completed: Int) {
+        recognitionCompletedUnits = min(completed, recognitionTotalUnits)
+        let progress = Double(recognitionCompletedUnits) / Double(recognitionTotalUnits)
+        recognitionProgress = progress
+        progressSoundPlayer.update(progress: progress)
+    }
+
+    private func finishRecognitionProgress(completed: Bool) {
+        recognitionProgressTask?.cancel()
+        recognitionProgressTask = nil
+        if completed {
+            recognitionProgress = 1
+            progressSoundPlayer.update(progress: 1)
+            progressSoundPlayer.complete()
+        } else {
+            progressSoundPlayer.stop()
+            recognitionProgress = nil
         }
     }
 }

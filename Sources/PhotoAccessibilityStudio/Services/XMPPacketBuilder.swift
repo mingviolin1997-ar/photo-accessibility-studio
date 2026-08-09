@@ -31,12 +31,15 @@ struct XMPPacketBuilder {
             throw XMPPacketError.malformedPacket
         }
         var opening = String(xml[openingRange])
-        if !xml.contains("xmlns:Iptc4xmpExt=\"") {
-            let suffix = opening.hasSuffix("/>") ? "/>" : ">"
-            opening.removeLast(suffix.count)
-            opening += " xmlns:Iptc4xmpExt=\"\(Self.namespace)\"\(suffix)"
-            xml.replaceSubrange(openingRange, with: opening)
+        let namespacePattern = #"\s+xmlns:Iptc4xmpExt\s*=\s*("[^"]*"|'[^']*')"#
+        if let regex = try? NSRegularExpression(pattern: namespacePattern) {
+            let range = NSRange(opening.startIndex..<opening.endIndex, in: opening)
+            opening = regex.stringByReplacingMatches(in: opening, range: range, withTemplate: "")
         }
+        let suffix = opening.hasSuffix("/>") ? "/>" : ">"
+        opening.removeLast(suffix.count)
+        opening += " xmlns:Iptc4xmpExt=\"\(Self.namespace)\"\(suffix)"
+        xml.replaceSubrange(openingRange, with: opening)
         let element = "<\(Self.directElement)>\(escape(description))</\(Self.directElement)>"
         if opening.hasSuffix("/>") {
             guard let refreshed = xml.range(of: #"<rdf:Description\b[^>]*/>"#,

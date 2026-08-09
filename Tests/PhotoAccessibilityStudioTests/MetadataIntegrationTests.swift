@@ -52,6 +52,28 @@ final class MetadataIntegrationTests: XCTestCase {
         XCTAssertFalse(xml.contains("<Iptc4xmpExt:AOContentDescription"))
     }
 
+    func testPacketBuilderReplacesIncorrectNamespaceOnDirectElement() throws {
+        let existing = Data("""
+        <x:xmpmeta xmlns:x="adobe:ns:meta/">
+          <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+            <rdf:Description rdf:about="" xmlns:Iptc4xmpExt="https://invalid.example/">
+              <Iptc4xmpExt:ArtworkContentDescription>旧值</Iptc4xmpExt:ArtworkContentDescription>
+            </rdf:Description>
+          </rdf:RDF>
+        </x:xmpmeta>
+        """.utf8)
+        let data = try XMPPacketBuilder().build(existing: existing,
+                                                description: "新的无障碍描述")
+        let xml = String(data: data, encoding: .utf8) ?? ""
+        XCTAssertTrue(xml.contains(
+            "xmlns:Iptc4xmpExt=\"http://iptc.org/std/Iptc4xmpExt/2008-02-29/\""
+        ))
+        XCTAssertFalse(xml.contains("https://invalid.example/"))
+        XCTAssertTrue(xml.contains(
+            "<Iptc4xmpExt:ArtworkContentDescription>新的无障碍描述</Iptc4xmpExt:ArtworkContentDescription>"
+        ))
+    }
+
     func testFlatPacketRoundTripAcrossCommonFormats() throws {
         let formats: [(NSBitmapImageRep.FileType, String)] = [
             (.png, "png"), (.jpeg, "jpg"), (.tiff, "tiff")

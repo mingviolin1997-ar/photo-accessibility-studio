@@ -5,6 +5,7 @@ struct AppConfiguration {
     var modelName = "qwen3.5:4b"
     var requestTimeout: TimeInterval = 180
     var retryCount = 3
+    var descriptionReviewAttempts = 3
     var maximumImageDimension: CGFloat = 1600
 
     static let supportedExtensions: Set<String> = [

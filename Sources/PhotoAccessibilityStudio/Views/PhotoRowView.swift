@@ -8,9 +8,9 @@ struct PhotoRowView: View {
         HStack(spacing: 12) {
             Toggle("", isOn: $isSelectedForWriting)
                 .labelsHidden()
-                .accessibilityLabel("写入 \(job.displayName)")
+                .accessibilityLabel("选择 \(job.displayName)")
                 .accessibilityValue(isSelectedForWriting ? "已选择" : "未选择")
-                .accessibilityHint("控制自动写入和批量写入是否包含这张照片")
+                .accessibilityHint("控制批量导出或写入原照片时是否包含这张照片")
             Image(systemName: statusIcon)
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(statusColor)
@@ -38,13 +38,14 @@ struct PhotoRowView: View {
         case .recognizing, .writing: return "hourglass"
         case .ready: return "doc.text.magnifyingglass"
         case .completed: return "checkmark.circle.fill"
+        case .exported: return "square.and.arrow.up.circle.fill"
         case .failed: return "exclamationmark.triangle.fill"
         }
     }
 
     private var statusColor: Color {
         switch job.status {
-        case .completed: return .green
+        case .completed, .exported: return .green
         case .failed: return .red
         case .recognizing, .writing: return .blue
         default: return .secondary

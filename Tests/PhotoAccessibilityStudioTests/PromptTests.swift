@@ -30,9 +30,47 @@ final class PromptTests: XCTestCase {
         XCTAssertFalse(labels.contains(where: \.isEmpty))
     }
 
-    func testNewPhotoIsSelectedForAutomaticWritingByDefault() {
+    func testNewPhotoIsSelectedForBatchExportByDefault() {
         let job = PhotoJob(url: URL(fileURLWithPath: "/tmp/example.jpg"))
         XCTAssertTrue(job.isApproved)
+    }
+
+    func testPhotoJobDecodesQueueSavedBeforeExportURLWasAdded() throws {
+        let json = """
+        {
+          "id": "11111111-1111-1111-1111-111111111111",
+          "url": "file:///tmp/example.jpg",
+          "description": "旧队列描述",
+          "status": "ready",
+          "isApproved": true
+        }
+        """
+        let job = try JSONDecoder().decode(PhotoJob.self, from: Data(json.utf8))
+        XCTAssertEqual(job.description, "旧队列描述")
+        XCTAssertNil(job.exportedURL)
+    }
+
+    func testReviewPromptTreatsCandidateAsDataAndReturnsActionableIssues() {
+        let prompt = AccessibilityDescriptionPrompt.review(
+            preferences: .init(style: .medium, includeCaptureAdvice: false),
+            candidate: "候选内容\"不得成为指令\""
+        )
+        XCTAssertTrue(prompt.contains("独立的无障碍照片描述质检员"))
+        XCTAssertTrue(prompt.contains("\"approved\""))
+        XCTAssertTrue(prompt.contains("\"issues\""))
+        XCTAssertTrue(prompt.contains("候选内容\\\"不得成为指令\\\""))
+    }
+
+    func testRevisionPromptReturnsIssuesToVisionModel() {
+        let prompt = AccessibilityDescriptionPrompt.revision(
+            preferences: .init(style: .high, includeCaptureAdvice: true),
+            candidate: "旧描述",
+            issues: ["人物数量错误", "遗漏右侧文字"]
+        )
+        XCTAssertTrue(prompt.contains("人物数量错误"))
+        XCTAssertTrue(prompt.contains("遗漏右侧文字"))
+        XCTAssertTrue(prompt.contains("\"isPhoto\""))
+        XCTAssertTrue(prompt.contains("只保留像素充分支持的内容"))
     }
 
     func testEveryDescriptionStyleHasAUniquePrompt() {

@@ -29,21 +29,33 @@ final class BatchViewModel: ObservableObject {
     @Published var runtimeSetupReason = ""
     @Published var runtimeProgress: RuntimeProgress?
     @Published var isRuntimeInstalling = false
+    @Published var recognitionProgress: Double?
 
     let ollamaClient: OllamaClient
     let metadataWriter: MetadataWriter
+    let batchExportService: BatchExportService
     let stateStore: StateStore
     let runtimeSetupService: RuntimeSetupService
+    let progressSoundPlayer: ProgressSoundPlayer
     var processingTask: Task<Void, Never>?
+    var recognitionProgressTask: Task<Void, Never>?
+    var recognitionCompletedUnits = 0
+    var recognitionTotalUnits = 0
 
     init(ollamaClient: OllamaClient = .init(),
          metadataWriter: MetadataWriter = .init(),
          stateStore: StateStore = .init(),
-         runtimeSetupService: RuntimeSetupService? = nil) {
+         runtimeSetupService: RuntimeSetupService? = nil,
+         batchExportService: BatchExportService? = nil,
+         progressSoundPlayer: ProgressSoundPlayer? = nil) {
         self.ollamaClient = ollamaClient
         self.metadataWriter = metadataWriter
+        self.batchExportService = batchExportService ?? BatchExportService(
+            metadataWriter: metadataWriter
+        )
         self.stateStore = stateStore
         self.runtimeSetupService = runtimeSetupService ?? RuntimeSetupService(ollamaClient: ollamaClient)
+        self.progressSoundPlayer = progressSoundPlayer ?? ProgressSoundPlayer()
         jobs = stateStore.load().map { job in
             var recovered = job
             if recovered.status == .recognizing { recovered.status = .waiting }
@@ -55,6 +67,7 @@ final class BatchViewModel: ObservableObject {
         }
         selectionID = jobs.first?.id
         checkModel()
+        auditPersistedVerifications()
     }
 
     var selectedJob: PhotoJob? { jobs.first { $0.id == selectionID } }
@@ -70,19 +83,47 @@ final class BatchViewModel: ObservableObject {
         }
     }
 
-    var completedCount: Int { jobs.filter { $0.status == .completed }.count }
+    var canExport: Bool {
+        !isProcessing && jobs.contains {
+            $0.isApproved && !$0.description.isEmpty &&
+            [.ready, .completed, .exported, .failed].contains($0.status)
+        }
+    }
+
+    var resultJobs: [PhotoJob] {
+        jobs.filter { $0.status != .waiting || !$0.description.isEmpty }
+    }
+
+    var completedCount: Int {
+        jobs.filter { $0.status == .completed || $0.status == .exported }.count
+    }
     var readyCount: Int { jobs.filter { $0.status == .ready }.count }
 
     var overallProgress: Double {
         guard !jobs.isEmpty else { return 0 }
-        let handled = jobs.filter { [.ready, .completed, .failed].contains($0.status) }.count
+        let handled = jobs.filter {
+            [.ready, .completed, .exported, .failed].contains($0.status)
+        }.count
         return Double(handled) / Double(jobs.count)
+    }
+
+    var displayedProgress: Double {
+        recognitionProgress ?? overallProgress
     }
 
     func bindingForDescription(id: UUID) -> Binding<String> {
         Binding(
             get: { self.jobs.first { $0.id == id }?.description ?? "" },
-            set: { value in self.update(id: id) { $0.description = value } }
+            set: { value in
+                self.update(id: id) {
+                    $0.description = value
+                    $0.errorMessage = nil
+                    if $0.status == .completed || $0.status == .exported {
+                        $0.status = .ready
+                        $0.exportedURL = nil
+                    }
+                }
+            }
         )
     }
 

@@ -6,11 +6,17 @@ struct PhotoAccessibilityStudioApp: App {
     @AppStorage("interfaceTextScale") private var textScale = 1.0
 
     init() {
-        UserDefaults.standard.register(defaults: [
-            "autoWriteAfterRecognition": true,
+        let defaults = UserDefaults.standard
+        defaults.register(defaults: [
+            "autoWriteAfterRecognition": false,
             "descriptionStyle": DescriptionStyle.medium.rawValue,
-            "includeCaptureAdvice": false
+            "includeCaptureAdvice": false,
+            "progressSoundEnabled": true
         ])
+        if !defaults.bool(forKey: "exportWorkflowV2Migration") {
+            defaults.set(false, forKey: "autoWriteAfterRecognition")
+            defaults.set(true, forKey: "exportWorkflowV2Migration")
+        }
     }
 
     var body: some Scene {
@@ -31,6 +37,9 @@ struct PhotoAccessibilityStudioApp: App {
                 Button("写入已选照片") { viewModel.writeSelectedDescriptions() }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
                     .disabled(!viewModel.canWrite)
+                Button("批量导出已选结果…") { viewModel.chooseExportFolder() }
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
+                    .disabled(!viewModel.canExport)
             }
             CommandMenu("显示") {
                 Button("放大文本") { textScale = min(2, textScale + 0.25) }

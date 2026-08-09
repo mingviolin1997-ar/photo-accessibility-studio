@@ -37,7 +37,7 @@ struct ContentView: View {
     private var queueHeader: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("照片队列")
+                Text("原始素材")
                     .font(.headline)
                 Spacer()
                 Text("\(viewModel.jobs.count) 张")
@@ -53,7 +53,7 @@ struct ContentView: View {
             .accessibilityValue(viewModel.modelHealth.label)
             .accessibilityHint("重新检查 Ollama 与 Qwen 模型")
             HStack {
-                Button("全选写入") { viewModel.selectAllForWriting() }
+                Button("全选结果") { viewModel.selectAllForWriting() }
                     .disabled(viewModel.jobs.isEmpty || viewModel.isProcessing)
                 Button("全部取消") { viewModel.deselectAllForWriting() }
                     .disabled(viewModel.jobs.isEmpty || viewModel.isProcessing)
@@ -80,9 +80,9 @@ struct ContentView: View {
                     .font(.caption.monospacedDigit())
                     .accessibilityLabel("已处理 \(progress.detail)")
             }
-            ProgressView(value: viewModel.overallProgress)
-                .accessibilityLabel("批处理进度")
-                .accessibilityValue("百分之 \(Int(viewModel.overallProgress * 100))")
+            ProgressView(value: viewModel.displayedProgress)
+                .accessibilityLabel("识别与批处理进度")
+                .accessibilityValue("百分之 \(Int(viewModel.displayedProgress * 100))")
             Text(viewModel.statusMessage)
                 .font(.callout)
                 .lineLimit(3)
@@ -120,16 +120,18 @@ struct ContentView: View {
                 .keyboardShortcut(.cancelAction)
             }
 
-            Button(action: viewModel.selectAllForWriting) {
-                Label("全选写入", systemImage: "checkmark.circle")
+            Button(action: viewModel.chooseExportFolder) {
+                Label("批量导出", systemImage: "square.and.arrow.up.on.square")
             }
-            .disabled(viewModel.jobs.isEmpty || viewModel.isProcessing)
+            .disabled(!viewModel.canExport)
+            .keyboardShortcut("e", modifiers: [.command, .shift])
+            .accessibilityHint("选择目标文件夹，导出所有已选且校对通过的照片副本，并写入及验证无障碍描述")
 
             Button(action: viewModel.writeSelectedDescriptions) {
-                Label("写入已选照片", systemImage: "square.and.arrow.down")
+                Label("写入原始照片", systemImage: "square.and.arrow.down")
             }
             .disabled(!viewModel.canWrite)
-            .accessibilityHint("立即写入已勾选且已经生成描述的照片")
+            .accessibilityHint("直接修改已勾选的原始照片；通常建议使用批量导出保留原始素材")
 
             Button { viewModel.isSettingsPresented = true } label: {
                 Label("设置", systemImage: "gearshape")

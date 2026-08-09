@@ -50,6 +50,23 @@ struct MetadataWriter {
         return value.isEmpty ? nil : value
     }
 
+    func verify(_ description: String,
+                at url: URL,
+                expectedIntegrity: ImageIntegritySnapshot? = nil) throws -> MetadataWriteResult {
+        let value = try normalized(description)
+        guard try readDescription(from: url) == value else {
+            throw MetadataWriterError.verificationFailed
+        }
+        try packetBuilder.validateRaw(rawXMP(from: url))
+        let snapshot = try integrity.snapshot(of: url)
+        if let expectedIntegrity, snapshot != expectedIntegrity {
+            throw MetadataWriterError.integrityChanged
+        }
+        return MetadataWriteResult(verifiedDescription: value,
+                                   integrity: snapshot,
+                                   rawPacketVerified: true)
+    }
+
     func write(_ description: String, to url: URL) throws -> MetadataWriteResult {
         let value = try normalized(description)
         guard !value.isEmpty else { throw MetadataWriterError.emptyDescription }
@@ -102,17 +119,9 @@ struct MetadataWriter {
                 throw MetadataWriterError.commandFailed(String(cString: strerror(errno)))
             }
             replacedOriginal = true
-            let finalDescription = try readDescription(from: url)
-            guard finalDescription == value else {
-                throw MetadataWriterError.commandFailed("最终文件字段读回不一致")
-            }
-            try packetBuilder.validateRaw(rawXMP(from: url))
-            let after = try integrity.snapshot(of: url)
-            guard before == after else { throw MetadataWriterError.integrityChanged }
+            let verified = try verify(value, at: url, expectedIntegrity: before)
             try? FileManager.default.removeItem(at: backup)
-            return MetadataWriteResult(verifiedDescription: value,
-                                       integrity: after,
-                                       rawPacketVerified: true)
+            return verified
         } catch {
             try? FileManager.default.removeItem(at: stage)
             if replacedOriginal && FileManager.default.fileExists(atPath: backup.path) {

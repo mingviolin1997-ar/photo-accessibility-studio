@@ -6,7 +6,8 @@ struct SettingsView: View {
     @AppStorage("interfaceTextScale") private var textScale = 1.0
     @AppStorage("descriptionStyle") private var descriptionStyle = DescriptionStyle.medium.rawValue
     @AppStorage("includeCaptureAdvice") private var includeCaptureAdvice = false
-    @AppStorage("autoWriteAfterRecognition") private var autoWriteAfterRecognition = true
+    @AppStorage("autoWriteAfterRecognition") private var autoWriteAfterRecognition = false
+    @AppStorage("progressSoundEnabled") private var progressSoundEnabled = true
 
     var body: some View {
         Form {
@@ -37,12 +38,14 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Section("批量处理") {
-                Toggle("识别完成后自动写入已选照片", isOn: $autoWriteAfterRecognition)
-                    .accessibilityHint("默认开启；每张照片默认选中，也可单独取消或使用全部取消")
-                Text("开启后无需逐张审核或再次确认。写入仍会验证扁平 XMP 字段、文件名、尺寸和像素，失败时恢复原图。")
+                Toggle("识别完成后直接写入原始照片", isOn: $autoWriteAfterRecognition)
+                    .accessibilityHint("默认关闭；建议确认右侧校对结果后，使用批量导出生成带描述的副本")
+                Text("推荐保持关闭并使用“批量导出”，避免在确认前修改原始素材。直接写入或导出都会验证扁平 XMP 字段、文件名、尺寸和像素。")
                     .foregroundStyle(.secondary)
             }
             Section("无障碍") {
+                Toggle("播放识别进度声音", isOn: $progressSoundEnabled)
+                    .accessibilityHint("识别期间每秒播放轻声提示；音调随进度升高，百分之五十和完成时使用不同声音")
                 Slider(value: $textScale, in: 1...2, step: 0.25) {
                     Text("界面文本大小")
                 } minimumValueLabel: {

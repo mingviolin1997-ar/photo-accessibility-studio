@@ -38,6 +38,7 @@ extension BatchViewModel {
     }
 
     func addPhotos(_ urls: [URL]) {
+        if !isProcessing { recognitionProgress = nil }
         let existing = Set(jobs.map { $0.url.standardizedFileURL })
         let valid = urls.filter {
             AppConfiguration.supportedExtensions.contains($0.pathExtension.lowercased()) &&
@@ -61,6 +62,53 @@ extension BatchViewModel {
                     $0.url.standardizedFileURL == url.standardizedFileURL
                 })?.id {
                     update(id: id) { $0.existingDescription = value }
+                }
+            }
+        }
+    }
+
+    func auditPersistedVerifications() {
+        let stored = jobs.filter {
+            $0.status == .completed || $0.status == .exported
+        }
+        guard !stored.isEmpty else { return }
+        Task {
+            for job in stored {
+                guard !job.description.isEmpty else {
+                    update(id: job.id) {
+                        $0.status = .failed
+                        $0.exportedURL = nil
+                        $0.errorMessage = "历史完成记录没有描述内容，已取消完成状态。"
+                    }
+                    continue
+                }
+                let target = job.status == .exported ? job.exportedURL : job.url
+                guard let target,
+                      FileManager.default.fileExists(atPath: target.path) else {
+                    update(id: job.id) {
+                        $0.status = .ready
+                        $0.exportedURL = nil
+                        $0.errorMessage = "历史完成记录找不到对应文件，请重新导出或写入。"
+                    }
+                    continue
+                }
+                do {
+                    let writer = metadataWriter
+                    _ = try await Task.detached {
+                        try writer.verify(job.description, at: target)
+                    }.value
+                    update(id: job.id) {
+                        $0.errorMessage = nil
+                        if job.status == .completed {
+                            $0.existingDescription = job.description
+                        }
+                    }
+                } catch {
+                    update(id: job.id) {
+                        $0.status = .ready
+                        $0.exportedURL = nil
+                        $0.errorMessage = "历史写入记录未通过底层复核：\(error.localizedDescription)"
+                    }
                 }
             }
         }
