@@ -8,6 +8,7 @@ struct SettingsView: View {
     @AppStorage("includeCaptureAdvice") private var includeCaptureAdvice = false
     @AppStorage("autoWriteAfterRecognition") private var autoWriteAfterRecognition = false
     @AppStorage("progressSoundEnabled") private var progressSoundEnabled = true
+    @AppStorage("historyRetentionDays") private var historyRetentionDays = 30
 
     var body: some View {
         Form {
@@ -41,6 +42,21 @@ struct SettingsView: View {
                 Toggle("识别完成后直接写入原始照片", isOn: $autoWriteAfterRecognition)
                     .accessibilityHint("默认关闭；建议确认右侧校对结果后，使用批量导出生成带描述的副本")
                 Text("推荐保持关闭并使用“批量导出”，避免在确认前修改原始素材。直接写入或导出都会验证扁平 XMP 字段、文件名、尺寸和像素。")
+                    .foregroundStyle(.secondary)
+            }
+            Section("历史记录") {
+                Stepper("历史默认保留 \(historyRetentionDays) 天",
+                        value: $historyRetentionDays,
+                        in: 1...365)
+                    .onChange(of: historyRetentionDays) { _, newValue in
+                        viewModel.applyHistoryRetention(days: newValue)
+                    }
+                    .accessibilityHint("超过保留天数的软件历史记录会自动清理，不删除磁盘里的原始照片或导出文件")
+                Button("立即清空全部历史记录", role: .destructive) {
+                    viewModel.clearHistory()
+                }
+                .disabled(viewModel.historyBatches.isEmpty)
+                Text("历史只保存软件中的照片引用和描述。清除历史、自动过期或从当前工作区删除，都不会删除磁盘中的原始照片和导出文件。")
                     .foregroundStyle(.secondary)
             }
             Section("无障碍") {

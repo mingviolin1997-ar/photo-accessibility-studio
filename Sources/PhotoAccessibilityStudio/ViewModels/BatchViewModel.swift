@@ -20,6 +20,9 @@ final class BatchViewModel: ObservableObject {
     @Published var jobs: [PhotoJob] {
         didSet { stateStore.save(jobs) }
     }
+    @Published var historyBatches: [HistoryBatch] {
+        didSet { stateStore.saveHistory(historyBatches) }
+    }
     @Published var selectionID: UUID?
     @Published var isProcessing = false
     @Published var statusMessage = "请选择照片开始。所有识别都在本机完成。"
@@ -56,7 +59,7 @@ final class BatchViewModel: ObservableObject {
         self.stateStore = stateStore
         self.runtimeSetupService = runtimeSetupService ?? RuntimeSetupService(ollamaClient: ollamaClient)
         self.progressSoundPlayer = progressSoundPlayer ?? ProgressSoundPlayer()
-        jobs = stateStore.load().map { job in
+        let recoveredJobs = stateStore.load().map { job in
             var recovered = job
             if recovered.status == .recognizing { recovered.status = .waiting }
             if recovered.status == .writing { recovered.status = .ready }
@@ -65,12 +68,27 @@ final class BatchViewModel: ObservableObject {
             }
             return recovered
         }
-        selectionID = jobs.first?.id
+        let storedDays = UserDefaults.standard.object(forKey: "historyRetentionDays") == nil
+            ? 30 : UserDefaults.standard.integer(forKey: "historyRetentionDays")
+        var recoveredHistory = stateStore.loadHistory(retentionDays: storedDays)
+        let previousDescribed = recoveredJobs.filter { !$0.description.isEmpty }
+        if !previousDescribed.isEmpty {
+            recoveredHistory.insert(HistoryBatch(jobs: previousDescribed), at: 0)
+        }
+        recoveredHistory = HistoryBatch.retaining(recoveredHistory, days: storedDays)
+        jobs = []
+        historyBatches = recoveredHistory
+        stateStore.save([])
+        stateStore.saveHistory(recoveredHistory)
+        selectionID = nil
         checkModel()
-        auditPersistedVerifications()
     }
 
     var selectedJob: PhotoJob? { jobs.first { $0.id == selectionID } }
+    var canDeleteSelected: Bool { !isProcessing && selectedJob != nil }
+    var historyPhotoCount: Int {
+        historyBatches.reduce(0) { $0 + $1.jobs.count }
+    }
 
     var canRecognize: Bool {
         modelHealth == .ready && !isProcessing && !isRuntimeInstalling &&

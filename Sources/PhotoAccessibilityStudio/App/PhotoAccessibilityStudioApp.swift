@@ -11,7 +11,8 @@ struct PhotoAccessibilityStudioApp: App {
             "autoWriteAfterRecognition": false,
             "descriptionStyle": DescriptionStyle.medium.rawValue,
             "includeCaptureAdvice": false,
-            "progressSoundEnabled": true
+            "progressSoundEnabled": true,
+            "historyRetentionDays": 30
         ])
         if !defaults.bool(forKey: "exportWorkflowV2Migration") {
             defaults.set(false, forKey: "autoWriteAfterRecognition")
@@ -40,6 +41,9 @@ struct PhotoAccessibilityStudioApp: App {
                 Button("批量导出已选结果…") { viewModel.chooseExportFolder() }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
                     .disabled(!viewModel.canExport)
+                Button("删除当前所选素材") { viewModel.removeSelected() }
+                    .keyboardShortcut(.delete, modifiers: .command)
+                    .disabled(!viewModel.canDeleteSelected)
             }
             CommandMenu("显示") {
                 Button("放大文本") { textScale = min(2, textScale + 0.25) }

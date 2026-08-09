@@ -16,6 +16,8 @@ struct ContentView: View {
                 .overlay {
                     if viewModel.jobs.isEmpty { EmptyQueueView() }
                 }
+                .layoutPriority(1)
+                HistorySectionView(viewModel: viewModel)
                 statusFooter
             }
             .navigationSplitViewColumnWidth(min: 330, ideal: 390)
@@ -58,6 +60,11 @@ struct ContentView: View {
                 Button("全部取消") { viewModel.deselectAllForWriting() }
                     .disabled(viewModel.jobs.isEmpty || viewModel.isProcessing)
             }
+            Button("清空当前工作区", role: .destructive) {
+                viewModel.clearCurrentWorkspace()
+            }
+            .disabled(viewModel.jobs.isEmpty || viewModel.isProcessing)
+            .accessibilityHint("有描述的项目进入历史；只清空软件工作区，不删除磁盘中的照片")
         }
         .padding()
     }
@@ -119,6 +126,13 @@ struct ContentView: View {
                 }
                 .keyboardShortcut(.cancelAction)
             }
+
+            Button(action: viewModel.removeSelected) {
+                Label("删除所选", systemImage: "trash")
+            }
+            .disabled(!viewModel.canDeleteSelected)
+            .keyboardShortcut(.delete, modifiers: .command)
+            .accessibilityHint("从当前工作区删除左侧素材和右侧对应结果；原始照片保留在磁盘")
 
             Button(action: viewModel.chooseExportFolder) {
                 Label("批量导出", systemImage: "square.and.arrow.up.on.square")
